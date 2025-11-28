@@ -6,9 +6,14 @@ import { fromError } from "zod-validation-error";
 import OpenAI from "openai";
 import { z } from "zod";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAIClient(): OpenAI | null {
+  if (!process.env.OPENAI_API_KEY) {
+    return null;
+  }
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+}
 
 const ttsRequestSchema = z.object({
   text: z.string().min(1).max(4096),
@@ -84,7 +89,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/tts", async (req, res) => {
     try {
-      if (!process.env.OPENAI_API_KEY) {
+      const openai = getOpenAIClient();
+      if (!openai) {
         return res.status(503).json({ 
           error: "Text-to-speech is not configured. Please add your OpenAI API key." 
         });

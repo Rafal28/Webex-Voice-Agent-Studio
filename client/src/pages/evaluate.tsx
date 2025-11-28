@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, Play, Pause, Send, Download, Settings2, Star, Loader2 } from "lucide-react";
+import { ArrowLeft, Mic, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, evaluationsApi } from "@/lib/api";
+import { agentsApi, evaluationsApi, ttsApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
 
 export default function Evaluate() {
@@ -23,7 +23,11 @@ export default function Evaluate() {
   const params = new URLSearchParams(search);
   const agentId = params.get("agentId") ? parseInt(params.get("agentId")!) : null;
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [inputText, setInputText] = useState("Welcome to the Webex AI Podcaster evaluation. I am ready to assist you.");
   
   const [ratings, setRatings] = useState({
@@ -45,6 +49,25 @@ export default function Evaluate() {
     enabled: !!agentId,
   });
 
+  const generateTTSMutation = useMutation({
+    mutationFn: (data: TTSRequest) => ttsApi.generate(data),
+    onSuccess: (response) => {
+      const audioData = `data:${response.contentType};base64,${response.audio}`;
+      setAudioUrl(audioData);
+      toast({
+        title: "Audio Generated",
+        description: "Click play to listen to the generated speech.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error Generating Audio",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const saveEvaluationMutation = useMutation({
     mutationFn: (data: InsertEvaluation) => evaluationsApi.create(data),
     onSuccess: () => {
@@ -62,6 +85,28 @@ export default function Evaluate() {
       });
     },
   });
+
+  const handleGenerateAudio = () => {
+    if (!agent || !inputText.trim()) return;
+    
+    const voice = agent.voiceModel as TTSRequest["voice"];
+    generateTTSMutation.mutate({
+      text: inputText,
+      voice: voice,
+      model: "tts-1",
+    });
+  };
+
+  const handlePlayPause = () => {
+    if (!audioRef.current || !audioUrl) return;
+    
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
+  };
 
   const handleSaveEvaluation = () => {
     if (!agentId) return;
@@ -81,6 +126,19 @@ export default function Evaluate() {
       setLocation("/");
     }
   }, [agentId, setLocation]);
+
+  useEffect(() => {
+    if (audioUrl && audioRef.current) {
+      audioRef.current.src = audioUrl;
+      audioRef.current.load();
+    }
+  }, [audioUrl]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
 
   if (agentLoading) {
     return (
@@ -103,6 +161,13 @@ export default function Evaluate() {
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans flex flex-col">
+      <audio 
+        ref={audioRef}
+        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => setAudioDuration(e.currentTarget.duration)}
+        onEnded={() => setIsPlaying(false)}
+      />
+      
       <header className="border-b border-white/10 bg-background/50 backdrop-blur-md h-16 flex items-center px-6 justify-between sticky top-0 z-50">
         <div className="flex items-center gap-4">
           <Link href="/">
@@ -154,33 +219,60 @@ export default function Evaluate() {
                     <AvatarImage src="https://github.com/shadcn.png" />
                     <AvatarFallback className="bg-primary text-black font-bold">AI</AvatarFallback>
                  </Avatar>
-                 <div className="space-y-2">
+                 <div className="space-y-2 flex-1">
                     <div className="text-sm font-medium text-muted-foreground">{agent.name}</div>
                     <div className="p-4 rounded-2xl rounded-tl-none bg-white/5 border border-white/10 text-lg leading-relaxed">
                        {inputText}
                     </div>
-                    <div className="flex items-center gap-3 pt-1">
-                      <Button 
-                        size="sm" 
-                        variant="secondary" 
-                        className="rounded-full h-8 px-4 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20"
-                        onClick={() => setIsPlaying(!isPlaying)}
-                        data-testid="button-play-audio"
-                      >
-                        {isPlaying ? <Pause className="w-3 h-3 mr-2" /> : <Play className="w-3 h-3 mr-2" />}
-                        {isPlaying ? "Pause Audio" : "Play Audio"}
-                      </Button>
-                      <span className="text-xs text-muted-foreground font-mono">00:04 / 00:12</span>
-                      
-                      <div className="flex items-center gap-0.5 h-4">
-                         {[40, 60, 30, 80, 50, 90, 40, 60, 30, 50, 70, 40].map((h, i) => (
-                           <div 
-                            key={i} 
-                            className={`w-0.5 rounded-full transition-all duration-300 ${isPlaying ? 'bg-primary animate-pulse' : 'bg-white/20'}`} 
-                            style={{ height: `${isPlaying ? Math.random() * 100 : h}%` }}
-                           />
-                         ))}
-                      </div>
+                    <div className="flex items-center gap-3 pt-1 flex-wrap">
+                      {audioUrl ? (
+                        <>
+                          <Button 
+                            size="sm" 
+                            variant="secondary" 
+                            className="rounded-full h-8 px-4 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20"
+                            onClick={handlePlayPause}
+                            data-testid="button-play-audio"
+                          >
+                            {isPlaying ? <Pause className="w-3 h-3 mr-2" /> : <Play className="w-3 h-3 mr-2" />}
+                            {isPlaying ? "Pause" : "Play"}
+                          </Button>
+                          <span className="text-xs text-muted-foreground font-mono">
+                            {formatTime(currentTime)} / {formatTime(audioDuration)}
+                          </span>
+                          
+                          <div className="flex items-center gap-0.5 h-4">
+                             {[40, 60, 30, 80, 50, 90, 40, 60, 30, 50, 70, 40].map((h, i) => (
+                               <div 
+                                key={i} 
+                                className={`w-0.5 rounded-full transition-all duration-300 ${isPlaying ? 'bg-primary animate-pulse' : 'bg-white/20'}`} 
+                                style={{ height: `${isPlaying ? Math.random() * 100 : h}%` }}
+                               />
+                             ))}
+                          </div>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="rounded-full h-8 px-4 bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/20"
+                          onClick={handleGenerateAudio}
+                          disabled={generateTTSMutation.isPending || !inputText.trim()}
+                          data-testid="button-generate-audio"
+                        >
+                          {generateTTSMutation.isPending ? (
+                            <>
+                              <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-3 h-3 mr-2" />
+                              Generate Audio
+                            </>
+                          )}
+                        </Button>
+                      )}
                     </div>
                  </div>
               </div>
@@ -192,22 +284,32 @@ export default function Evaluate() {
                    className="w-full bg-background border border-white/10 rounded-xl p-4 pr-12 min-h-[100px] resize-none focus:ring-1 focus:ring-primary focus:border-primary transition-all text-base"
                    placeholder="Type something for the agent to say..."
                    value={inputText}
-                   onChange={(e) => setInputText(e.target.value)}
+                   onChange={(e) => {
+                     setInputText(e.target.value);
+                     setAudioUrl(null);
+                   }}
                    data-testid="input-evaluation-text"
                  />
                  <Button 
                    size="icon" 
                    className="absolute bottom-3 right-3 h-8 w-8 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
+                   onClick={handleGenerateAudio}
+                   disabled={generateTTSMutation.isPending || !inputText.trim()}
                  >
                    <Send className="w-4 h-4" />
                  </Button>
               </div>
               <div className="flex justify-between items-center mt-3 px-1">
                  <div className="flex gap-2">
-                    <Badge variant="outline" className="bg-transparent border-white/10 text-xs font-normal text-muted-foreground hover:bg-white/5 cursor-pointer">Generate Response</Badge>
-                    <Badge variant="outline" className="bg-transparent border-white/10 text-xs font-normal text-muted-foreground hover:bg-white/5 cursor-pointer">Regenerate Audio</Badge>
+                    <Badge 
+                      variant="outline" 
+                      className="bg-transparent border-white/10 text-xs font-normal text-muted-foreground hover:bg-white/5 cursor-pointer"
+                      onClick={handleGenerateAudio}
+                    >
+                      {audioUrl ? "Regenerate Audio" : "Generate Audio"}
+                    </Badge>
                  </div>
-                 <span className="text-xs text-muted-foreground">CMD + Enter to send</span>
+                 <span className="text-xs text-muted-foreground">Click send or badge to generate</span>
               </div>
            </div>
         </div>
