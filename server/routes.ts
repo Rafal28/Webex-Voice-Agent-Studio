@@ -3,6 +3,18 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertAgentSchema, insertEvaluationSchema } from "@shared/schema";
 import { fromError } from "zod-validation-error";
+import OpenAI from "openai";
+import { z } from "zod";
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const ttsRequestSchema = z.object({
+  text: z.string().min(1).max(4096),
+  voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]),
+  model: z.enum(["tts-1", "tts-1-hd"]).default("tts-1"),
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
@@ -67,6 +79,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(evaluations);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch evaluations" });
+    }
+  });
+
+  app.post("/api/tts", async (req, res) => {
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(503).json({ 
+          error: "Text-to-speech is not configured. Please add your OpenAI API key." 
+        });
+      }
+
+      const data = ttsRequestSchema.parse(req.body);
+      
+      const mp3 = await openai.audio.speech.create({
+        model: data.model,
+        voice: data.voice,
+        input: data.text,
+      });
+
+      const buffer = Buffer.from(await mp3.arrayBuffer());
+      const base64Audio = buffer.toString("base64");
+
+      res.json({ 
+        audio: base64Audio,
+        contentType: "audio/mpeg"
+      });
+    } catch (error: any) {
+      console.error("TTS Error:", error);
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: fromError(error).toString() });
+      }
+      if (error.status === 401) {
+        return res.status(401).json({ error: "Invalid OpenAI API key" });
+      }
+      res.status(500).json({ error: "Failed to generate speech" });
     }
   });
 
