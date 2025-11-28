@@ -1,22 +1,31 @@
-import { useState } from "react";
-import { Link } from "wouter";
+import { useState, useEffect } from "react";
+import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, Play, Pause, Send, Download, Settings2, Volume2, RefreshCw, Star } from "lucide-react";
+import { ArrowLeft, Mic, Play, Pause, Send, Download, Settings2, Star, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { agentsApi, evaluationsApi } from "@/lib/api";
+import type { InsertEvaluation } from "@shared/schema";
 
 export default function Evaluate() {
+  const search = useSearch();
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  
+  const params = new URLSearchParams(search);
+  const agentId = params.get("agentId") ? parseInt(params.get("agentId")!) : null;
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [inputText, setInputText] = useState("Welcome to the Webex AI Podcaster evaluation. I am ready to assist you.");
-  const [generatedAudio, setGeneratedAudio] = useState(true); // Mock state
   
-  // Evaluation Metrics
   const [ratings, setRatings] = useState({
     naturalness: 75,
     clarity: 85,
@@ -24,9 +33,76 @@ export default function Evaluate() {
     speed: 50
   });
 
+  const { data: agent, isLoading: agentLoading } = useQuery({
+    queryKey: ["agent", agentId],
+    queryFn: () => agentId ? agentsApi.getById(agentId) : Promise.reject("No agent ID"),
+    enabled: !!agentId,
+  });
+
+  const { data: evaluations = [] } = useQuery({
+    queryKey: ["evaluations", agentId],
+    queryFn: () => agentId ? evaluationsApi.getByAgent(agentId) : Promise.resolve([]),
+    enabled: !!agentId,
+  });
+
+  const saveEvaluationMutation = useMutation({
+    mutationFn: (data: InsertEvaluation) => evaluationsApi.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["evaluations", agentId] });
+      toast({
+        title: "Evaluation Saved",
+        description: "Your quality ratings have been recorded.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error Saving Evaluation",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSaveEvaluation = () => {
+    if (!agentId) return;
+    
+    saveEvaluationMutation.mutate({
+      agentId,
+      inputText,
+      naturalness: ratings.naturalness,
+      clarity: ratings.clarity,
+      intonation: ratings.intonation,
+      speed: ratings.speed,
+    });
+  };
+
+  useEffect(() => {
+    if (!agentId) {
+      setLocation("/");
+    }
+  }, [agentId, setLocation]);
+
+  if (agentLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!agent) {
+    return null;
+  }
+
+  const avgScore = evaluations.length > 0 
+    ? Math.round(
+        evaluations.reduce((sum, e) => sum + e.naturalness + e.clarity + e.intonation + e.speed, 0) 
+        / (evaluations.length * 4)
+      )
+    : null;
+
   return (
     <div className="min-h-screen bg-background text-foreground font-sans flex flex-col">
-      {/* Header */}
       <header className="border-b border-white/10 bg-background/50 backdrop-blur-md h-16 flex items-center px-6 justify-between sticky top-0 z-50">
         <div className="flex items-center gap-4">
           <Link href="/">
@@ -39,68 +115,77 @@ export default function Evaluate() {
                 <Mic className="w-4 h-4 text-black" />
              </div>
              <div>
-               <h1 className="font-display font-bold leading-none">Agent Alpha-1</h1>
-               <span className="text-xs text-muted-foreground">GPT-4o • Alloy Voice • English</span>
+               <h1 className="font-display font-bold leading-none" data-testid="text-agent-name">{agent.name}</h1>
+               <span className="text-xs text-muted-foreground">
+                 {agent.llmModel} • {agent.voiceModel} • {agent.language}
+               </span>
              </div>
           </div>
         </div>
         
         <div className="flex items-center gap-3">
+           {avgScore !== null && (
+             <Badge className="bg-primary/10 text-primary border-primary/20">
+               Avg Score: {avgScore}%
+             </Badge>
+           )}
            <Button variant="outline" size="sm" className="border-white/10 bg-white/5 hover:bg-white/10">
              <Settings2 className="w-4 h-4 mr-2" /> Settings
            </Button>
-           <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90">
-             <Download className="w-4 h-4 mr-2" /> Export Report
+           <Button 
+             size="sm" 
+             className="bg-primary text-primary-foreground hover:bg-primary/90"
+             onClick={handleSaveEvaluation}
+             disabled={saveEvaluationMutation.isPending}
+             data-testid="button-save-evaluation"
+           >
+             <Download className="w-4 h-4 mr-2" /> 
+             {saveEvaluationMutation.isPending ? "Saving..." : "Save Evaluation"}
            </Button>
         </div>
       </header>
 
       <main className="flex-1 grid lg:grid-cols-12 gap-0 overflow-hidden">
         
-        {/* LEFT: Chat / Input Area */}
         <div className="lg:col-span-7 flex flex-col border-r border-white/10 bg-card/20 p-6 overflow-y-auto">
            <div className="flex-1 space-y-6">
-              {/* Agent Message Bubble */}
               <div className="flex gap-4 max-w-2xl">
                  <Avatar className="h-10 w-10 border border-primary/50">
                     <AvatarImage src="https://github.com/shadcn.png" />
                     <AvatarFallback className="bg-primary text-black font-bold">AI</AvatarFallback>
                  </Avatar>
                  <div className="space-y-2">
-                    <div className="text-sm font-medium text-muted-foreground">Agent Alpha-1</div>
+                    <div className="text-sm font-medium text-muted-foreground">{agent.name}</div>
                     <div className="p-4 rounded-2xl rounded-tl-none bg-white/5 border border-white/10 text-lg leading-relaxed">
                        {inputText}
                     </div>
-                    {generatedAudio && (
-                       <div className="flex items-center gap-3 pt-1">
-                          <Button 
-                            size="sm" 
-                            variant="secondary" 
-                            className="rounded-full h-8 px-4 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20"
-                            onClick={() => setIsPlaying(!isPlaying)}
-                          >
-                            {isPlaying ? <Pause className="w-3 h-3 mr-2" /> : <Play className="w-3 h-3 mr-2" />}
-                            {isPlaying ? "Pause Audio" : "Play Audio"}
-                          </Button>
-                          <span className="text-xs text-muted-foreground font-mono">00:04 / 00:12</span>
-                          
-                          {/* Fake waveform */}
-                          <div className="flex items-center gap-0.5 h-4">
-                             {[40, 60, 30, 80, 50, 90, 40, 60, 30, 50, 70, 40].map((h, i) => (
-                               <div 
-                                key={i} 
-                                className={`w-0.5 rounded-full transition-all duration-300 ${isPlaying ? 'bg-primary animate-pulse' : 'bg-white/20'}`} 
-                                style={{ height: `${isPlaying ? Math.random() * 100 : h}%` }}
-                               />
-                             ))}
-                          </div>
-                       </div>
-                    )}
+                    <div className="flex items-center gap-3 pt-1">
+                      <Button 
+                        size="sm" 
+                        variant="secondary" 
+                        className="rounded-full h-8 px-4 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20"
+                        onClick={() => setIsPlaying(!isPlaying)}
+                        data-testid="button-play-audio"
+                      >
+                        {isPlaying ? <Pause className="w-3 h-3 mr-2" /> : <Play className="w-3 h-3 mr-2" />}
+                        {isPlaying ? "Pause Audio" : "Play Audio"}
+                      </Button>
+                      <span className="text-xs text-muted-foreground font-mono">00:04 / 00:12</span>
+                      
+                      <div className="flex items-center gap-0.5 h-4">
+                         {[40, 60, 30, 80, 50, 90, 40, 60, 30, 50, 70, 40].map((h, i) => (
+                           <div 
+                            key={i} 
+                            className={`w-0.5 rounded-full transition-all duration-300 ${isPlaying ? 'bg-primary animate-pulse' : 'bg-white/20'}`} 
+                            style={{ height: `${isPlaying ? Math.random() * 100 : h}%` }}
+                           />
+                         ))}
+                      </div>
+                    </div>
                  </div>
               </div>
            </div>
 
-           {/* Input Area */}
            <div className="mt-8 pt-6 border-t border-white/10">
               <div className="relative">
                  <textarea 
@@ -108,6 +193,7 @@ export default function Evaluate() {
                    placeholder="Type something for the agent to say..."
                    value={inputText}
                    onChange={(e) => setInputText(e.target.value)}
+                   data-testid="input-evaluation-text"
                  />
                  <Button 
                    size="icon" 
@@ -126,7 +212,6 @@ export default function Evaluate() {
            </div>
         </div>
 
-        {/* RIGHT: Evaluation Panel */}
         <div className="lg:col-span-5 bg-background p-8 overflow-y-auto border-l border-white/5">
            <div className="mb-8">
               <h2 className="text-xl font-display font-semibold mb-2 flex items-center gap-2">
@@ -138,7 +223,6 @@ export default function Evaluate() {
 
            <div className="space-y-8">
               
-              {/* Naturalness */}
               <div className="space-y-4">
                  <div className="flex justify-between items-center">
                     <Label className="text-base font-medium">Naturalness</Label>
@@ -150,13 +234,13 @@ export default function Evaluate() {
                    max={100} 
                    step={1}
                    className="py-2"
+                   data-testid="slider-naturalness"
                  />
                  <p className="text-xs text-muted-foreground">Does the voice sound human-like and authentic?</p>
               </div>
 
               <Separator className="bg-white/5" />
 
-              {/* Clarity */}
               <div className="space-y-4">
                  <div className="flex justify-between items-center">
                     <Label className="text-base font-medium">Clarity & Pronunciation</Label>
@@ -168,13 +252,13 @@ export default function Evaluate() {
                    max={100} 
                    step={1}
                    className="py-2"
+                   data-testid="slider-clarity"
                  />
                  <p className="text-xs text-muted-foreground">Are words pronounced clearly and correctly?</p>
               </div>
 
               <Separator className="bg-white/5" />
 
-              {/* Intonation */}
               <div className="space-y-4">
                  <div className="flex justify-between items-center">
                     <Label className="text-base font-medium">Intonation & Emotion</Label>
@@ -186,13 +270,13 @@ export default function Evaluate() {
                    max={100} 
                    step={1}
                    className="py-2"
+                   data-testid="slider-intonation"
                  />
                  <p className="text-xs text-muted-foreground">Does the speech have appropriate emotional range?</p>
               </div>
 
               <Separator className="bg-white/5" />
 
-              {/* Speed */}
               <div className="space-y-4">
                  <div className="flex justify-between items-center">
                     <Label className="text-base font-medium">Speed & Pacing</Label>
@@ -204,9 +288,34 @@ export default function Evaluate() {
                    max={100} 
                    step={1}
                    className="py-2"
+                   data-testid="slider-speed"
                  />
                  <p className="text-xs text-muted-foreground">Is the speaking rate comfortable to listen to?</p>
               </div>
+
+              {evaluations.length > 0 && (
+                <>
+                  <Separator className="bg-white/5" />
+                  <div className="pt-2">
+                    <h3 className="font-medium mb-3 text-sm">Previous Evaluations ({evaluations.length})</h3>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {evaluations.slice(-5).reverse().map((evaluation) => (
+                        <div key={evaluation.id} className="p-3 rounded-lg bg-white/5 border border-white/10 text-xs">
+                          <div className="flex justify-between mb-1">
+                            <span className="text-muted-foreground">
+                              {new Date(evaluation.createdAt).toLocaleDateString()}
+                            </span>
+                            <span className="text-primary font-mono">
+                              Avg: {Math.round((evaluation.naturalness + evaluation.clarity + evaluation.intonation + evaluation.speed) / 4)}%
+                            </span>
+                          </div>
+                          <p className="text-muted-foreground line-clamp-1">{evaluation.inputText}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="pt-6">
                  <Card className="bg-white/5 border-white/10 p-4">

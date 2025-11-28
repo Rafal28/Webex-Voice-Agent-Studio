@@ -1,12 +1,20 @@
 import { Link } from "wouter";
 import { motion } from "framer-motion";
 import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { agentsApi } from "@/lib/api";
 import heroBg from "@assets/generated_images/Abstract_sound_waves_visualization_010bae0d.png";
 
 export default function Home() {
+  const { data: agents = [] } = useQuery({
+    queryKey: ["agents"],
+    queryFn: agentsApi.getAll,
+  });
+
+  const latestAgent = agents.length > 0 ? agents[agents.length - 1] : null;
+
   return (
     <div className="min-h-screen bg-background text-foreground relative overflow-hidden font-sans">
-      {/* Background Image with Overlay */}
       <div className="absolute inset-0 z-0 opacity-20">
         <img 
           src={heroBg} 
@@ -34,10 +42,14 @@ export default function Home() {
             Design personalized voice agents for the Webex ecosystem. 
             Build custom personas and evaluate speech quality in real-time.
           </p>
+          {agents.length > 0 && (
+            <p className="text-sm text-muted-foreground mt-4" data-testid="text-agent-count">
+              {agents.length} agent{agents.length !== 1 ? 's' : ''} created
+            </p>
+          )}
         </motion.div>
 
         <div className="grid md:grid-cols-2 gap-8 w-full max-w-4xl">
-          {/* Build Mode Card */}
           <Link href="/build">
             <motion.div 
               whileHover={{ scale: 1.02, translateY: -5 }}
@@ -64,8 +76,7 @@ export default function Home() {
             </motion.div>
           </Link>
 
-          {/* Evaluate Mode Card */}
-          <Link href="/evaluate">
+          <Link href={latestAgent ? `/evaluate?agentId=${latestAgent.id}` : "/build"}>
             <motion.div 
               whileHover={{ scale: 1.02, translateY: -5 }}
               whileTap={{ scale: 0.98 }}
@@ -86,7 +97,7 @@ export default function Home() {
               </p>
               
               <div className="flex items-center text-sm font-medium text-purple-400 group-hover:translate-x-1 transition-transform">
-                Start Evaluation <ArrowRight className="w-4 h-4 ml-2" />
+                {latestAgent ? `Evaluate ${latestAgent.name}` : "Create an Agent First"} <ArrowRight className="w-4 h-4 ml-2" />
               </div>
             </motion.div>
           </Link>

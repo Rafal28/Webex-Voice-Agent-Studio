@@ -7,7 +7,11 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { useMutation } from "@tanstack/react-query";
+import { agentsApi } from "@/lib/api";
+import type { InsertAgent } from "@shared/schema";
 
 const LLMS = [
   { id: "gpt-4", name: "GPT-4o", provider: "OpenAI", desc: "Best for reasoning & nuance" },
@@ -27,30 +31,43 @@ const VOICES = [
 export default function Build() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [loading, setLoading] = useState(false);
   
-  // Form State
+  const [agentName, setAgentName] = useState("Agent Alpha-1");
   const [selectedLLM, setSelectedLLM] = useState(LLMS[0].id);
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
   const [language, setLanguage] = useState("en-US");
   const [gender, setGender] = useState("neutral");
 
-  const handleCreate = () => {
-    setLoading(true);
-    // Simulate API call
-    setTimeout(() => {
-      setLoading(false);
+  const createAgentMutation = useMutation({
+    mutationFn: (data: InsertAgent) => agentsApi.create(data),
+    onSuccess: (agent) => {
       toast({
         title: "Agent Created Successfully",
         description: "Your podcaster agent is ready for evaluation.",
       });
-      setLocation("/evaluate");
-    }, 1500);
+      setLocation(`/evaluate?agentId=${agent.id}`);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error Creating Agent",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCreate = () => {
+    createAgentMutation.mutate({
+      name: agentName,
+      llmModel: selectedLLM,
+      voiceModel: selectedVoice,
+      language,
+      gender,
+    });
   };
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans pb-20">
-      {/* Header */}
       <header className="border-b border-white/10 bg-background/50 backdrop-blur-md sticky top-0 z-50">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <Link href="/">
@@ -59,14 +76,40 @@ export default function Build() {
             </Button>
           </Link>
           <h1 className="text-lg font-display font-bold">Build Agent</h1>
-          <div className="w-20" /> {/* Spacer */}
+          <div className="w-20" />
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-10 max-w-4xl">
         <div className="space-y-12">
           
-          {/* Section 1: Core Config */}
+          <motion.section 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-400">
+                <User className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-display font-semibold">Agent Identity</h2>
+                <p className="text-muted-foreground text-sm">Give your agent a unique name.</p>
+              </div>
+            </div>
+            
+            <div className="space-y-3">
+              <Label className="text-base">Agent Name</Label>
+              <Input 
+                value={agentName}
+                onChange={(e) => setAgentName(e.target.value)}
+                placeholder="e.g., Tech Talk Host"
+                className="h-12 bg-background border-white/10"
+                data-testid="input-agent-name"
+              />
+            </div>
+          </motion.section>
+
           <motion.section 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -107,7 +150,6 @@ export default function Build() {
             </div>
           </motion.section>
 
-          {/* Section 2: Persona & Voice */}
           <motion.section 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -115,7 +157,7 @@ export default function Build() {
           >
             <div className="flex items-center gap-3 mb-6">
               <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-400">
-                <User className="w-5 h-5" />
+                <Mic className="w-5 h-5" />
               </div>
               <div>
                 <h2 className="text-2xl font-display font-semibold">Persona & Voice</h2>
@@ -125,12 +167,11 @@ export default function Build() {
 
             <div className="grid md:grid-cols-2 gap-8 bg-card/30 p-6 rounded-2xl border border-white/5">
               
-              {/* Language & Gender */}
               <div className="space-y-6">
                 <div className="space-y-3">
                   <Label className="text-base">Language</Label>
                   <Select value={language} onValueChange={setLanguage}>
-                    <SelectTrigger className="w-full h-12 bg-background border-white/10 focus:ring-primary">
+                    <SelectTrigger className="w-full h-12 bg-background border-white/10 focus:ring-primary" data-testid="select-language">
                       <SelectValue placeholder="Select Language" />
                     </SelectTrigger>
                     <SelectContent>
@@ -163,7 +204,6 @@ export default function Build() {
                 </div>
               </div>
 
-              {/* Voice Selection */}
               <div className="space-y-3">
                  <Label className="text-base flex justify-between">
                     <span>Voice Model</span>
@@ -179,6 +219,7 @@ export default function Build() {
                             ? "bg-primary/10 border-primary" 
                             : "bg-background border-white/10 hover:border-white/30"
                         }`}
+                        data-testid={`voice-card-${voice.id}`}
                       >
                         <div className="flex flex-col">
                           <span className="font-medium text-sm">{voice.name}</span>
@@ -190,7 +231,6 @@ export default function Build() {
                           className={`h-8 w-8 rounded-full ${selectedVoice === voice.id ? "bg-primary/20 text-primary" : "bg-secondary text-muted-foreground group-hover:text-foreground"}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            // Play sound mock
                             toast({ title: `Playing ${voice.name} preview...` });
                           }}
                         >
@@ -204,16 +244,15 @@ export default function Build() {
             </div>
           </motion.section>
           
-          {/* Footer Actions */}
           <div className="flex justify-end pt-8 border-t border-white/10">
              <Button 
               size="lg" 
               className="px-8 h-12 text-base font-medium bg-gradient-to-r from-primary to-cyan-400 hover:from-primary/90 hover:to-cyan-400/90 text-black shadow-lg shadow-cyan-500/20"
               onClick={handleCreate}
-              disabled={loading}
+              disabled={createAgentMutation.isPending || !agentName.trim()}
               data-testid="button-create-agent"
              >
-               {loading ? (
+               {createAgentMutation.isPending ? (
                  <>Creating Agent...</>
                ) : (
                  <>Create Agent <Sparkles className="w-4 h-4 ml-2" /></>
