@@ -49,11 +49,16 @@ export default function Evaluate() {
     enabled: !!agentId,
   });
 
+  const VALID_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
+
   const generateTTSMutation = useMutation({
     mutationFn: (data: TTSRequest) => ttsApi.generate(data),
     onSuccess: (response) => {
       const audioData = `data:${response.contentType};base64,${response.audio}`;
       setAudioUrl(audioData);
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setAudioDuration(0);
       toast({
         title: "Audio Generated",
         description: "Click play to listen to the generated speech.",
@@ -89,23 +94,42 @@ export default function Evaluate() {
   const handleGenerateAudio = () => {
     if (!agent || !inputText.trim()) return;
     
-    const voice = agent.voiceModel as TTSRequest["voice"];
+    const voice = agent.voiceModel;
+    if (!VALID_VOICES.includes(voice as any)) {
+      toast({
+        title: "Unsupported Voice",
+        description: `The voice "${voice}" is not supported. Please select a valid voice model.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
     generateTTSMutation.mutate({
       text: inputText,
-      voice: voice,
+      voice: voice as TTSRequest["voice"],
       model: "tts-1",
     });
   };
 
-  const handlePlayPause = () => {
+  const handlePlayPause = async () => {
     if (!audioRef.current || !audioUrl) return;
     
     if (isPlaying) {
       audioRef.current.pause();
+      setIsPlaying(false);
     } else {
-      audioRef.current.play();
+      try {
+        await audioRef.current.play();
+        setIsPlaying(true);
+      } catch (error) {
+        toast({
+          title: "Playback Error",
+          description: "Unable to play audio. Please try again.",
+          variant: "destructive",
+        });
+        setIsPlaying(false);
+      }
     }
-    setIsPlaying(!isPlaying);
   };
 
   const handleSaveEvaluation = () => {
