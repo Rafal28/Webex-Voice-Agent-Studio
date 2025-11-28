@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
-import { agentsApi } from "@/lib/api";
+import { agentsApi, ttsApi, type TTSRequest } from "@/lib/api";
 import type { InsertAgent } from "@shared/schema";
 
 const LLMS = [
@@ -28,6 +28,8 @@ const VOICES = [
   { id: "shimmer", name: "Shimmer", gender: "Female", style: "Soft" },
 ];
 
+const VOICE_PREVIEW_TEXT = "Hello! I'm your AI podcaster assistant. Let me help you create engaging content.";
+
 export default function Build() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -37,6 +39,10 @@ export default function Build() {
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
   const [language, setLanguage] = useState("en-US");
   const [gender, setGender] = useState("neutral");
+  
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const createAgentMutation = useMutation({
     mutationFn: (data: InsertAgent) => agentsApi.create(data),
@@ -55,6 +61,57 @@ export default function Build() {
       });
     },
   });
+
+  const handleVoicePreview = async (voiceId: string) => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    
+    if (playingVoice === voiceId) {
+      setPlayingVoice(null);
+      return;
+    }
+    
+    setPreviewingVoice(voiceId);
+    setPlayingVoice(null);
+    
+    try {
+      const response = await ttsApi.generate({
+        text: VOICE_PREVIEW_TEXT,
+        voice: voiceId as TTSRequest["voice"],
+        model: "tts-1",
+      });
+      
+      const audioData = `data:${response.contentType};base64,${response.audio}`;
+      const audio = new Audio(audioData);
+      audioRef.current = audio;
+      
+      audio.onended = () => {
+        setPlayingVoice(null);
+      };
+      
+      audio.onerror = () => {
+        setPlayingVoice(null);
+        toast({
+          title: "Playback Error",
+          description: "Unable to play the audio preview.",
+          variant: "destructive",
+        });
+      };
+      
+      await audio.play();
+      setPlayingVoice(voiceId);
+    } catch (error: any) {
+      toast({
+        title: "Preview Error",
+        description: error.message || "Failed to generate voice preview.",
+        variant: "destructive",
+      });
+    } finally {
+      setPreviewingVoice(null);
+    }
+  };
 
   const handleCreate = () => {
     createAgentMutation.mutate({
@@ -231,10 +288,17 @@ export default function Build() {
                           className={`h-8 w-8 rounded-full ${selectedVoice === voice.id ? "bg-primary/20 text-primary" : "bg-secondary text-muted-foreground group-hover:text-foreground"}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            toast({ title: `Playing ${voice.name} preview...` });
+                            handleVoicePreview(voice.id);
                           }}
+                          disabled={previewingVoice !== null}
                         >
-                          <Play className="w-3 h-3 fill-current" />
+                          {previewingVoice === voice.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : playingVoice === voice.id ? (
+                            <Square className="w-3 h-3 fill-current" />
+                          ) : (
+                            <Play className="w-3 h-3 fill-current" />
+                          )}
                         </Button>
                       </div>
                     ))}
