@@ -1,14 +1,38 @@
 import { Link } from "wouter";
 import { motion } from "framer-motion";
-import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
 import heroBg from "@assets/generated_images/Abstract_sound_waves_visualization_010bae0d.png";
 
 export default function Home() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
     queryFn: agentsApi.getAll,
+  });
+
+  const deleteAgentMutation = useMutation({
+    mutationFn: (id: number) => agentsApi.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      toast({
+        title: "Agent Deleted",
+        description: "The agent has been removed.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Delete Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   const latestAgent = agents.length > 0 ? agents[agents.length - 1] : null;
@@ -102,6 +126,96 @@ export default function Home() {
             </motion.div>
           </Link>
         </div>
+
+        {agents.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.2 }}
+            className="w-full max-w-4xl mt-16"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-display font-bold">Your Agents</h2>
+              <span className="text-sm text-muted-foreground">{agents.length} agent{agents.length !== 1 ? 's' : ''}</span>
+            </div>
+            
+            <div className="grid gap-4">
+              {agents.map((agent) => (
+                <Card 
+                  key={agent.id} 
+                  className="p-5 bg-card/50 backdrop-blur-sm border-white/10 hover:border-white/20 transition-colors"
+                  data-testid={`card-agent-${agent.id}`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center">
+                          <Bot className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-lg" data-testid={`text-agent-name-${agent.id}`}>{agent.name}</h3>
+                          <p className="text-xs text-muted-foreground">
+                            Created {new Date(agent.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Cpu className="w-4 h-4" />
+                          <span className="truncate" data-testid={`text-agent-llm-${agent.id}`}>{agent.llmModel}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Mic className="w-4 h-4" />
+                          <span className="truncate capitalize" data-testid={`text-agent-voice-${agent.id}`}>{agent.voiceModel}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Globe className="w-4 h-4" />
+                          <span className="truncate" data-testid={`text-agent-language-${agent.id}`}>{agent.language}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <User className="w-4 h-4" />
+                          <span className="truncate capitalize" data-testid={`text-agent-gender-${agent.id}`}>{agent.gender}</span>
+                        </div>
+                      </div>
+
+                      {agent.systemPrompt && (
+                        <div className="mt-3 flex items-start gap-2 text-sm text-muted-foreground">
+                          <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          <p className="line-clamp-2" data-testid={`text-agent-prompt-${agent.id}`}>{agent.systemPrompt}</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Link href={`/evaluate?agentId=${agent.id}`}>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          className="gap-2"
+                          data-testid={`button-evaluate-agent-${agent.id}`}
+                        >
+                          <Play className="w-4 h-4" />
+                          Evaluate
+                        </Button>
+                      </Link>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => deleteAgentMutation.mutate(agent.id)}
+                        disabled={deleteAgentMutation.isPending}
+                        data-testid={`button-delete-agent-${agent.id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </motion.div>
+        )}
       </div>
     </div>
   );
