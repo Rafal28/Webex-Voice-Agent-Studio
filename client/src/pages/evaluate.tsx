@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -40,6 +40,11 @@ export default function Evaluate() {
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  
+  const [isRecording, setIsRecording] = useState(false);
+  const [autoPlayVoice, setAutoPlayVoice] = useState(true);
+  const recognitionRef = useRef<any>(null);
+  const responseAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -95,6 +100,35 @@ export default function Evaluate() {
     },
   });
 
+  const generateAndPlayAudio = useCallback(async (text: string) => {
+    if (!agent) return;
+    
+    const voice = agent.voiceModel;
+    if (!VALID_VOICES.includes(voice as any)) return;
+    
+    try {
+      const response = await ttsApi.generate({
+        text,
+        voice: voice as TTSRequest["voice"],
+        model: "tts-1",
+      });
+      
+      const audioData = `data:${response.contentType};base64,${response.audio}`;
+      setAudioUrl(audioData);
+      
+      if (autoPlayVoice) {
+        const audio = new Audio(audioData);
+        responseAudioRef.current = audio;
+        audio.onended = () => {
+          responseAudioRef.current = null;
+        };
+        await audio.play();
+      }
+    } catch (error) {
+      console.error("Failed to generate audio:", error);
+    }
+  }, [agent, autoPlayVoice]);
+
   const chatMutation = useMutation({
     mutationFn: ({ message, history }: { message: string; history: ChatMessage[] }) => chatApi.send({
       message,
@@ -106,6 +140,10 @@ export default function Evaluate() {
       setChatMessages(prev => [...prev, { role: "assistant", content: response.response }]);
       setInputText(response.response);
       setAudioUrl(null);
+      
+      if (autoPlayVoice) {
+        generateAndPlayAudio(response.response);
+      }
     },
     onError: (error) => {
       toast({
@@ -125,6 +163,89 @@ export default function Evaluate() {
     chatMutation.mutate({ message: chatInput, history: chatMessages });
     setChatInput("");
   };
+
+  const startVoiceRecording = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      toast({
+        title: "Voice Input Not Supported",
+        description: "Your browser doesn't support voice input. Try using Chrome or Edge.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (responseAudioRef.current) {
+      responseAudioRef.current.pause();
+      responseAudioRef.current = null;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = agent?.language || 'en-US';
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+    };
+
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results)
+        .map((result: any) => result[0].transcript)
+        .join('');
+      setChatInput(transcript);
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.onerror = (event: any) => {
+      setIsRecording(false);
+      recognitionRef.current = null;
+      
+      if (event.error !== 'aborted') {
+        toast({
+          title: "Voice Recognition Error",
+          description: event.error === 'no-speech' ? 'No speech detected. Please try again.' : `Error: ${event.error}`,
+          variant: "destructive",
+        });
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  }, [agent?.language, toast]);
+
+  const stopVoiceRecording = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+  }, []);
+
+  const sendVoiceMessage = useCallback((transcript: string, currentHistory: ChatMessage[]) => {
+    if (!transcript.trim()) return;
+    
+    const newMessage: ChatMessage = { role: "user", content: transcript };
+    setChatMessages(prev => [...prev, newMessage]);
+    chatMutation.mutate({ message: transcript, history: currentHistory });
+    setChatInput("");
+  }, [chatMutation]);
+
+  const handleVoiceToggle = useCallback(() => {
+    if (isRecording) {
+      stopVoiceRecording();
+      if (chatInput.trim()) {
+        setTimeout(() => {
+          sendVoiceMessage(chatInput, chatMessages);
+        }, 300);
+      }
+    } else {
+      startVoiceRecording();
+    }
+  }, [isRecording, chatInput, chatMessages, startVoiceRecording, stopVoiceRecording, sendVoiceMessage]);
 
   const handleGenerateAudio = () => {
     if (!agent || !inputText.trim()) return;
@@ -326,24 +447,53 @@ export default function Evaluate() {
            </div>
 
            <div className="mt-4 pt-4 border-t border-white/10 space-y-4">
-              <div className="relative">
-                 <input 
-                   className="w-full bg-background border border-white/10 rounded-xl p-4 pr-12 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-base"
-                   placeholder="Ask the agent something..."
-                   value={chatInput}
-                   onChange={(e) => setChatInput(e.target.value)}
-                   onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
-                   data-testid="input-chat"
-                 />
-                 <Button 
-                   size="icon" 
-                   className="absolute top-1/2 -translate-y-1/2 right-3 h-8 w-8 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
-                   onClick={handleSendChat}
-                   disabled={chatMutation.isPending || !chatInput.trim()}
+              <div className="flex items-center gap-3">
+                 <Button
+                   size="icon"
+                   className={`h-12 w-12 rounded-full transition-all ${
+                     isRecording 
+                       ? "bg-red-500 hover:bg-red-600 animate-pulse" 
+                       : "bg-purple-500 hover:bg-purple-600"
+                   }`}
+                   onClick={handleVoiceToggle}
+                   disabled={chatMutation.isPending}
+                   data-testid="button-voice-input"
                  >
-                   <MessageCircle className="w-4 h-4" />
+                   {isRecording ? (
+                     <Square className="w-5 h-5 text-white" />
+                   ) : (
+                     <Mic className="w-5 h-5 text-white" />
+                   )}
                  </Button>
+                 
+                 <div className="relative flex-1">
+                   <input 
+                     className={`w-full bg-background border rounded-xl p-4 pr-12 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-base ${
+                       isRecording ? "border-red-500/50 bg-red-500/5" : "border-white/10"
+                     }`}
+                     placeholder={isRecording ? "Listening..." : "Ask the agent something..."}
+                     value={chatInput}
+                     onChange={(e) => setChatInput(e.target.value)}
+                     onKeyDown={(e) => e.key === "Enter" && !isRecording && handleSendChat()}
+                     data-testid="input-chat"
+                   />
+                   <Button 
+                     size="icon" 
+                     className="absolute top-1/2 -translate-y-1/2 right-3 h-8 w-8 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
+                     onClick={handleSendChat}
+                     disabled={chatMutation.isPending || !chatInput.trim() || isRecording}
+                   >
+                     <MessageCircle className="w-4 h-4" />
+                   </Button>
+                 </div>
               </div>
+              
+              {isRecording && (
+                <div className="flex items-center gap-2 text-sm text-red-400">
+                  <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                  Recording... Click the button again to send your message
+                </div>
+              )}
 
               {inputText && (
                 <div className="bg-white/5 rounded-xl p-4 border border-white/10">
