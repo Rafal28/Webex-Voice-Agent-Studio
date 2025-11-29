@@ -187,52 +187,40 @@ export default function Evaluate() {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = agent?.language || 'en-US';
+    
+    let fullTranscript = '';
 
     recognition.onstart = () => {
       setIsRecording(true);
+      fullTranscript = '';
     };
 
     recognition.onresult = (event: any) => {
-      let finalTranscript = '';
       let interimTranscript = '';
+      let finalTranscript = '';
       
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript + ' ';
         } else {
-          interimTranscript += transcript;
+          interimTranscript += result[0].transcript;
         }
       }
       
-      setChatInput(prev => {
-        if (finalTranscript) {
-          return (prev + ' ' + finalTranscript).trim();
-        }
-        return prev || interimTranscript;
-      });
+      fullTranscript = finalTranscript;
+      const displayText = (finalTranscript + interimTranscript).trim();
+      setChatInput(displayText);
+      chatInputRef.current = displayText;
     };
 
     recognition.onend = () => {
-      if (isRecording && recognitionRef.current) {
-        try {
-          recognition.start();
-        } catch (e) {
-          setIsRecording(false);
-          recognitionRef.current = null;
-        }
-      } else {
-        setIsRecording(false);
-        recognitionRef.current = null;
-      }
+      setIsRecording(false);
+      recognitionRef.current = null;
     };
 
     recognition.onerror = (event: any) => {
-      if (event.error === 'no-speech') {
-        return;
-      }
-      
-      if (event.error === 'aborted') {
+      if (event.error === 'no-speech' || event.error === 'aborted') {
         return;
       }
       
@@ -248,7 +236,7 @@ export default function Evaluate() {
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [agent?.language, toast, isRecording]);
+  }, [agent?.language, toast]);
 
   const stopVoiceRecording = useCallback(() => {
     if (recognitionRef.current) {
