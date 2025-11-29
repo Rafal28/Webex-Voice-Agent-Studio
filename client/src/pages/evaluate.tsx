@@ -182,7 +182,7 @@ export default function Evaluate() {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = agent?.language || 'en-US';
 
@@ -191,33 +191,62 @@ export default function Evaluate() {
     };
 
     recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results)
-        .map((result: any) => result[0].transcript)
-        .join('');
-      setChatInput(transcript);
+      let finalTranscript = '';
+      let interimTranscript = '';
+      
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+      
+      setChatInput(prev => {
+        if (finalTranscript) {
+          return (prev + ' ' + finalTranscript).trim();
+        }
+        return prev || interimTranscript;
+      });
     };
 
     recognition.onend = () => {
-      setIsRecording(false);
-      recognitionRef.current = null;
+      if (isRecording && recognitionRef.current) {
+        try {
+          recognition.start();
+        } catch (e) {
+          setIsRecording(false);
+          recognitionRef.current = null;
+        }
+      } else {
+        setIsRecording(false);
+        recognitionRef.current = null;
+      }
     };
 
     recognition.onerror = (event: any) => {
+      if (event.error === 'no-speech') {
+        return;
+      }
+      
+      if (event.error === 'aborted') {
+        return;
+      }
+      
       setIsRecording(false);
       recognitionRef.current = null;
       
-      if (event.error !== 'aborted') {
-        toast({
-          title: "Voice Recognition Error",
-          description: event.error === 'no-speech' ? 'No speech detected. Please try again.' : `Error: ${event.error}`,
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "Voice Recognition Error",
+        description: `Error: ${event.error}. Please try again.`,
+        variant: "destructive",
+      });
     };
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [agent?.language, toast]);
+  }, [agent?.language, toast, isRecording]);
 
   const stopVoiceRecording = useCallback(() => {
     if (recognitionRef.current) {
