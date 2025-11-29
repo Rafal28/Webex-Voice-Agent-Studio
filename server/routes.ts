@@ -110,13 +110,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No audio data provided" });
       }
 
-      const base64Audio = audioData.replace(/^data:audio\/\w+;base64,/, '');
+      const mimeMatch = audioData.match(/^data:(audio\/[^;]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'audio/webm';
+      const base64Audio = audioData.replace(/^data:audio\/[^;]+;base64,/, '');
       const audioBuffer = Buffer.from(base64Audio, 'base64');
 
-      const file = new File([audioBuffer], 'audio.webm', { type: 'audio/webm' });
+      let extension = 'webm';
+      if (mimeType.includes('mp4')) extension = 'mp4';
+      else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) extension = 'mp3';
+      else if (mimeType.includes('wav')) extension = 'wav';
+      else if (mimeType.includes('ogg')) extension = 'ogg';
 
       const transcription = await openai.audio.transcriptions.create({
-        file: file,
+        file: await OpenAI.toFile(audioBuffer, `audio.${extension}`, { type: mimeType }),
         model: "whisper-1",
       });
 
