@@ -6,6 +6,38 @@ import { fromError } from "zod-validation-error";
 import OpenAI from "openai";
 import { z } from "zod";
 
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(
+  url: string, 
+  headers: Record<string, string>, 
+  maxRetries: number = 3
+): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, { headers });
+      
+      if (response.status === 502 || response.status === 503 || response.status === 504) {
+        console.log(`Webex API returned ${response.status}, retrying in ${(attempt + 1) * 2}s...`);
+        await sleep((attempt + 1) * 2000);
+        continue;
+      }
+      
+      return response;
+    } catch (error: any) {
+      lastError = error;
+      console.log(`Network error, retrying in ${(attempt + 1) * 2}s...`, error.message);
+      await sleep((attempt + 1) * 2000);
+    }
+  }
+  
+  throw lastError || new Error('Max retries exceeded');
+}
+
 async function paginateGet(
   endpoint: string,
   params: Record<string, string>,
@@ -24,7 +56,7 @@ async function paginateGet(
   let page = 0;
   
   while (url && page < maxPages) {
-    const response: Response = await fetch(url, { headers });
+    const response: Response = await fetchWithRetry(url, headers);
     if (!response.ok) {
       throw new Error(`Webex API error: ${response.status} ${response.statusText}`);
     }
