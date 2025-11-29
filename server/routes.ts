@@ -8,6 +8,12 @@ import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import multer from "multer";
+
+const upload = multer({ 
+  dest: os.tmpdir(),
+  limits: { fileSize: 25 * 1024 * 1024 }
+});
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -99,7 +105,7 @@ const ttsRequestSchema = z.object({
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
-  app.post("/api/transcribe", async (req, res) => {
+  app.post("/api/transcribe", upload.single('audio'), async (req, res) => {
     let tempFilePath: string | null = null;
     
     try {
@@ -110,24 +116,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const audioData = req.body.audio;
-      if (!audioData) {
-        return res.status(400).json({ error: "No audio data provided" });
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ error: "No audio file provided" });
       }
 
-      const mimeMatch = audioData.match(/^data:(audio\/[^;]+);base64,/);
-      const mimeType = mimeMatch ? mimeMatch[1] : 'audio/webm';
-      const base64Audio = audioData.replace(/^data:audio\/[^;]+;base64,/, '');
-      const audioBuffer = Buffer.from(base64Audio, 'base64');
-
-      let extension = 'webm';
-      if (mimeType.includes('mp4')) extension = 'mp4';
-      else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) extension = 'mp3';
-      else if (mimeType.includes('wav')) extension = 'wav';
-      else if (mimeType.includes('ogg')) extension = 'ogg';
-
-      tempFilePath = path.join(os.tmpdir(), `audio_${Date.now()}.${extension}`);
-      fs.writeFileSync(tempFilePath, audioBuffer);
+      const originalName = file.originalname || 'recording.webm';
+      const extension = path.extname(originalName) || '.webm';
+      tempFilePath = file.path + extension;
+      
+      fs.renameSync(file.path, tempFilePath);
 
       const transcription = await openai.audio.transcriptions.create({
         file: fs.createReadStream(tempFilePath),
@@ -145,6 +143,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (tempFilePath && fs.existsSync(tempFilePath)) {
         try {
           fs.unlinkSync(tempFilePath);
+        } catch (e) {
+        }
+      }
+      if (req.file && fs.existsSync(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
         } catch (e) {
         }
       }

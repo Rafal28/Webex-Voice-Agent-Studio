@@ -125,11 +125,13 @@ export interface TranscribeResponse {
 }
 
 export const transcribeApi = {
-  transcribe: async (audioBase64: string): Promise<TranscribeResponse> => {
+  transcribe: async (audioBlob: Blob): Promise<TranscribeResponse> => {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.webm');
+    
     const res = await fetch(`${API_BASE}/transcribe`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ audio: audioBase64 }),
+      body: formData,
     });
     if (!res.ok) {
       const error = await res.json();
