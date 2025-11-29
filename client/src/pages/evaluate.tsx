@@ -175,7 +175,14 @@ export default function Evaluate() {
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : MediaRecorder.isTypeSupported('audio/webm') 
+          ? 'audio/webm' 
+          : 'audio/mp4';
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
@@ -192,7 +199,7 @@ export default function Evaluate() {
           return;
         }
 
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         setIsTranscribing(true);
         setChatInput("Transcribing...");
 
@@ -235,7 +242,7 @@ export default function Evaluate() {
       };
 
       mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start();
+      mediaRecorder.start(100);
       setIsRecording(true);
     } catch (error: any) {
       toast({
