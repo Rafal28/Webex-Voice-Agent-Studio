@@ -120,6 +120,25 @@ export const chatApi = {
   },
 };
 
+export interface TranscribeResponse {
+  text: string;
+}
+
+export const transcribeApi = {
+  transcribe: async (audioBase64: string): Promise<TranscribeResponse> => {
+    const res = await fetch(`${API_BASE}/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audio: audioBase64 }),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to transcribe audio");
+    }
+    return res.json();
+  },
+};
+
 export const webexApi = {
   getStats: async (): Promise<WebexStats> => {
     const res = await fetch(`${API_BASE}/webex/stats`);

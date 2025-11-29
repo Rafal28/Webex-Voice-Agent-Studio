@@ -96,6 +96,40 @@ const ttsRequestSchema = z.object({
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
+  app.post("/api/transcribe", async (req, res) => {
+    try {
+      const openai = getOpenAIClient();
+      if (!openai) {
+        return res.status(503).json({ 
+          error: "Transcription is not configured. Please add your OpenAI API key." 
+        });
+      }
+
+      const audioData = req.body.audio;
+      if (!audioData) {
+        return res.status(400).json({ error: "No audio data provided" });
+      }
+
+      const base64Audio = audioData.replace(/^data:audio\/\w+;base64,/, '');
+      const audioBuffer = Buffer.from(base64Audio, 'base64');
+
+      const file = new File([audioBuffer], 'audio.webm', { type: 'audio/webm' });
+
+      const transcription = await openai.audio.transcriptions.create({
+        file: file,
+        model: "whisper-1",
+      });
+
+      res.json({ text: transcription.text });
+    } catch (error: any) {
+      console.error("Transcription Error:", error);
+      if (error.status === 401) {
+        return res.status(401).json({ error: "Invalid OpenAI API key" });
+      }
+      res.status(500).json({ error: "Failed to transcribe audio" });
+    }
+  });
+  
   app.post("/api/agents", async (req, res) => {
     try {
       const data = insertAgentSchema.parse(req.body);

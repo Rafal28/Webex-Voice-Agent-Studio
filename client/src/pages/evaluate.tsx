@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, evaluationsApi, ttsApi, chatApi, type TTSRequest } from "@/lib/api";
+import { agentsApi, evaluationsApi, ttsApi, chatApi, transcribeApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
 
@@ -42,10 +42,11 @@ export default function Evaluate() {
   const [chatInput, setChatInput] = useState("");
   
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [autoPlayVoice, setAutoPlayVoice] = useState(true);
-  const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
-  const chatInputRef = useRef<string>("");
   const chatMessagesRef = useRef<ChatMessage[]>([]);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
@@ -166,116 +167,104 @@ export default function Evaluate() {
     setChatInput("");
   };
 
-  const startVoiceRecording = useCallback(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    
-    if (!SpeechRecognition) {
-      toast({
-        title: "Voice Input Not Supported",
-        description: "Your browser doesn't support voice input. Try using Chrome or Edge.",
-        variant: "destructive",
-      });
-      return;
-    }
+  const startVoiceRecording = useCallback(async () => {
+    try {
+      if (responseAudioRef.current) {
+        responseAudioRef.current.pause();
+        responseAudioRef.current = null;
+      }
 
-    if (responseAudioRef.current) {
-      responseAudioRef.current.pause();
-      responseAudioRef.current = null;
-    }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      audioChunksRef.current = [];
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = agent?.language || 'en-US';
-    
-    let fullTranscript = '';
-
-    recognition.onstart = () => {
-      setIsRecording(true);
-      fullTranscript = '';
-    };
-
-    recognition.onresult = (event: any) => {
-      let interimTranscript = '';
-      let finalTranscript = '';
-      
-      for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalTranscript += result[0].transcript + ' ';
-        } else {
-          interimTranscript += result[0].transcript;
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
         }
-      }
-      
-      fullTranscript = finalTranscript;
-      const displayText = (finalTranscript + interimTranscript).trim();
-      setChatInput(displayText);
-      chatInputRef.current = displayText;
-    };
+      };
 
-    recognition.onend = () => {
-      setIsRecording(false);
-      recognitionRef.current = null;
-    };
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+        
+        if (audioChunksRef.current.length === 0) {
+          setIsRecording(false);
+          return;
+        }
 
-    recognition.onerror = (event: any) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') {
-        return;
-      }
-      
-      setIsRecording(false);
-      recognitionRef.current = null;
-      
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setIsTranscribing(true);
+        setChatInput("Transcribing...");
+
+        try {
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = async () => {
+            const base64Audio = reader.result as string;
+            try {
+              const result = await transcribeApi.transcribe(base64Audio);
+              setChatInput(result.text);
+              
+              if (result.text.trim()) {
+                const currentHistory = chatMessagesRef.current;
+                const newMessage: ChatMessage = { role: "user", content: result.text };
+                setChatMessages(prev => [...prev, newMessage]);
+                chatMutation.mutate({ message: result.text, history: currentHistory });
+                setChatInput("");
+              }
+            } catch (error: any) {
+              toast({
+                title: "Transcription Failed",
+                description: error.message || "Could not transcribe audio",
+                variant: "destructive",
+              });
+              setChatInput("");
+            } finally {
+              setIsTranscribing(false);
+            }
+          };
+        } catch (error: any) {
+          setIsTranscribing(false);
+          setChatInput("");
+          toast({
+            title: "Error",
+            description: "Failed to process audio",
+            variant: "destructive",
+          });
+        }
+      };
+
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (error: any) {
       toast({
-        title: "Voice Recognition Error",
-        description: `Error: ${event.error}. Please try again.`,
+        title: "Microphone Access Denied",
+        description: "Please allow microphone access to use voice input.",
         variant: "destructive",
       });
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [agent?.language, toast]);
+    }
+  }, [toast, chatMutation]);
 
   const stopVoiceRecording = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
     }
   }, []);
-
-  useEffect(() => {
-    chatInputRef.current = chatInput;
-  }, [chatInput]);
 
   useEffect(() => {
     chatMessagesRef.current = chatMessages;
   }, [chatMessages]);
 
-  const sendVoiceMessage = useCallback((transcript: string, currentHistory: ChatMessage[]) => {
-    if (!transcript.trim()) return;
-    
-    const newMessage: ChatMessage = { role: "user", content: transcript };
-    setChatMessages(prev => [...prev, newMessage]);
-    chatMutation.mutate({ message: transcript, history: currentHistory });
-    setChatInput("");
-  }, [chatMutation]);
-
   const handleVoiceToggle = useCallback(() => {
     if (isRecording) {
       stopVoiceRecording();
-      setTimeout(() => {
-        const currentInput = chatInputRef.current;
-        const currentHistory = chatMessagesRef.current;
-        if (currentInput.trim()) {
-          sendVoiceMessage(currentInput, currentHistory);
-        }
-      }, 500);
     } else {
       setChatInput("");
       startVoiceRecording();
     }
-  }, [isRecording, startVoiceRecording, stopVoiceRecording, sendVoiceMessage]);
+  }, [isRecording, startVoiceRecording, stopVoiceRecording]);
 
   const handleGenerateAudio = () => {
     if (!agent || !inputText.trim()) return;
@@ -483,14 +472,18 @@ export default function Evaluate() {
                    className={`h-12 w-12 rounded-full transition-all ${
                      isRecording 
                        ? "bg-red-500 hover:bg-red-600 animate-pulse" 
-                       : "bg-purple-500 hover:bg-purple-600"
+                       : isTranscribing
+                         ? "bg-yellow-500 hover:bg-yellow-600"
+                         : "bg-purple-500 hover:bg-purple-600"
                    }`}
                    onClick={handleVoiceToggle}
-                   disabled={chatMutation.isPending}
+                   disabled={chatMutation.isPending || isTranscribing}
                    data-testid="button-voice-input"
                  >
                    {isRecording ? (
                      <Square className="w-5 h-5 text-white" />
+                   ) : isTranscribing ? (
+                     <Loader2 className="w-5 h-5 text-white animate-spin" />
                    ) : (
                      <Mic className="w-5 h-5 text-white" />
                    )}
@@ -499,12 +492,13 @@ export default function Evaluate() {
                  <div className="relative flex-1">
                    <input 
                      className={`w-full bg-background border rounded-xl p-4 pr-12 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-base ${
-                       isRecording ? "border-red-500/50 bg-red-500/5" : "border-white/10"
+                       isRecording ? "border-red-500/50 bg-red-500/5" : isTranscribing ? "border-yellow-500/50 bg-yellow-500/5" : "border-white/10"
                      }`}
-                     placeholder={isRecording ? "Listening..." : "Ask the agent something..."}
+                     placeholder={isRecording ? "Recording..." : isTranscribing ? "Transcribing audio..." : "Ask the agent something..."}
                      value={chatInput}
                      onChange={(e) => setChatInput(e.target.value)}
-                     onKeyDown={(e) => e.key === "Enter" && !isRecording && handleSendChat()}
+                     onKeyDown={(e) => e.key === "Enter" && !isRecording && !isTranscribing && handleSendChat()}
+                     disabled={isTranscribing}
                      data-testid="input-chat"
                    />
                    <Button 
@@ -521,7 +515,14 @@ export default function Evaluate() {
               {isRecording && (
                 <div className="flex items-center gap-2 text-sm text-red-400">
                   <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                  Recording... Click the button again to send your message
+                  Recording... Click the stop button to transcribe and send
+                </div>
+              )}
+              
+              {isTranscribing && (
+                <div className="flex items-center gap-2 text-sm text-yellow-400">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Transcribing your audio with Whisper...
                 </div>
               )}
 
