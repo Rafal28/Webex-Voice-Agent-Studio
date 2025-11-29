@@ -45,6 +45,8 @@ export default function Evaluate() {
   const [autoPlayVoice, setAutoPlayVoice] = useState(true);
   const recognitionRef = useRef<any>(null);
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
+  const chatInputRef = useRef<string>("");
+  const chatMessagesRef = useRef<ChatMessage[]>([]);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -254,6 +256,14 @@ export default function Evaluate() {
     }
   }, []);
 
+  useEffect(() => {
+    chatInputRef.current = chatInput;
+  }, [chatInput]);
+
+  useEffect(() => {
+    chatMessagesRef.current = chatMessages;
+  }, [chatMessages]);
+
   const sendVoiceMessage = useCallback((transcript: string, currentHistory: ChatMessage[]) => {
     if (!transcript.trim()) return;
     
@@ -266,15 +276,18 @@ export default function Evaluate() {
   const handleVoiceToggle = useCallback(() => {
     if (isRecording) {
       stopVoiceRecording();
-      if (chatInput.trim()) {
-        setTimeout(() => {
-          sendVoiceMessage(chatInput, chatMessages);
-        }, 300);
-      }
+      setTimeout(() => {
+        const currentInput = chatInputRef.current;
+        const currentHistory = chatMessagesRef.current;
+        if (currentInput.trim()) {
+          sendVoiceMessage(currentInput, currentHistory);
+        }
+      }, 500);
     } else {
+      setChatInput("");
       startVoiceRecording();
     }
-  }, [isRecording, chatInput, chatMessages, startVoiceRecording, stopVoiceRecording, sendVoiceMessage]);
+  }, [isRecording, startVoiceRecording, stopVoiceRecording, sendVoiceMessage]);
 
   const handleGenerateAudio = () => {
     if (!agent || !inputText.trim()) return;
