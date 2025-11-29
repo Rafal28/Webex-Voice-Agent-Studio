@@ -5,6 +5,9 @@ import { insertAgentSchema, insertEvaluationSchema } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import OpenAI from "openai";
 import { z } from "zod";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -97,6 +100,8 @@ const ttsRequestSchema = z.object({
 export async function registerRoutes(app: Express): Promise<Server> {
   
   app.post("/api/transcribe", async (req, res) => {
+    let tempFilePath: string | null = null;
+    
     try {
       const openai = getOpenAIClient();
       if (!openai) {
@@ -121,8 +126,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       else if (mimeType.includes('wav')) extension = 'wav';
       else if (mimeType.includes('ogg')) extension = 'ogg';
 
+      tempFilePath = path.join(os.tmpdir(), `audio_${Date.now()}.${extension}`);
+      fs.writeFileSync(tempFilePath, audioBuffer);
+
       const transcription = await openai.audio.transcriptions.create({
-        file: await OpenAI.toFile(audioBuffer, `audio.${extension}`, { type: mimeType }),
+        file: fs.createReadStream(tempFilePath),
         model: "whisper-1",
       });
 
@@ -133,6 +141,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Invalid OpenAI API key" });
       }
       res.status(500).json({ error: "Failed to transcribe audio" });
+    } finally {
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (e) {
+        }
+      }
     }
   });
   
