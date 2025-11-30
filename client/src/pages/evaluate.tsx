@@ -42,11 +42,13 @@ export default function Evaluate() {
   const [chatInput, setChatInput] = useState("");
   
   const [isRecording, setIsRecording] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [autoPlayVoice, setAutoPlayVoice] = useState(true);
-  const recognitionRef = useRef<any>(null);
+  const deepgramSocketRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const chatMessagesRef = useRef<ChatMessage[]>([]);
-  const finalTranscriptRef = useRef<string>("");
+  const transcriptRef = useRef<string>("");
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -166,77 +168,100 @@ export default function Evaluate() {
     setChatInput("");
   };
 
-  const startVoiceRecording = useCallback(() => {
+  const startVoiceRecording = useCallback(async () => {
     try {
       if (responseAudioRef.current) {
         responseAudioRef.current.pause();
         responseAudioRef.current = null;
       }
 
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      
-      if (!SpeechRecognition) {
+      setIsConnecting(true);
+      transcriptRef.current = "";
+      setChatInput("");
+
+      const keyResponse = await fetch('/api/deepgram/key');
+      if (!keyResponse.ok) {
+        throw new Error('Failed to get Deepgram API key');
+      }
+      const { key } = await keyResponse.json();
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 16000,
+        }
+      });
+
+      const socket = new WebSocket(
+        `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true`,
+        ['token', key]
+      );
+
+      socket.onopen = () => {
+        console.log('Deepgram WebSocket connected');
+        setIsConnecting(false);
+        setIsRecording(true);
+
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+          ? 'audio/webm;codecs=opus' 
+          : 'audio/webm';
+        
+        const mediaRecorder = new MediaRecorder(stream, { mimeType });
+        
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
+            socket.send(event.data);
+          }
+        };
+
+        mediaRecorder.start(250);
+        mediaRecorderRef.current = mediaRecorder;
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.channel?.alternatives?.[0]?.transcript) {
+            const transcript = data.channel.alternatives[0].transcript;
+            const isFinal = data.is_final;
+            
+            if (isFinal && transcript) {
+              transcriptRef.current += transcript + ' ';
+              setChatInput(transcriptRef.current);
+            } else if (transcript) {
+              setChatInput(transcriptRef.current + transcript);
+            }
+          }
+        } catch (e) {
+          console.error('Error parsing Deepgram response:', e);
+        }
+      };
+
+      socket.onerror = (error) => {
+        console.error('Deepgram WebSocket error:', error);
         toast({
-          title: "Speech Recognition Not Supported",
-          description: "Please use Chrome or Edge browser for voice input.",
+          title: "Connection Error",
+          description: "Failed to connect to speech recognition service.",
           variant: "destructive",
         });
-        return;
-      }
-
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-      
-      finalTranscriptRef.current = "";
-
-      recognition.onstart = () => {
-        console.log('Speech recognition started');
-        setIsRecording(true);
-        setChatInput("");
-      };
-
-      recognition.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = finalTranscriptRef.current;
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript + ' ';
-            finalTranscriptRef.current = finalTranscript;
-          } else {
-            interimTranscript += transcript;
-          }
-        }
-        
-        setChatInput(finalTranscript + interimTranscript);
-      };
-
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        if (event.error === 'not-allowed') {
-          toast({
-            title: "Microphone Access Denied",
-            description: "Please allow microphone access to use voice input.",
-            variant: "destructive",
-          });
-        } else if (event.error !== 'aborted') {
-          toast({
-            title: "Speech Recognition Error",
-            description: `Error: ${event.error}`,
-            variant: "destructive",
-          });
-        }
         setIsRecording(false);
+        setIsConnecting(false);
+        stream.getTracks().forEach(track => track.stop());
       };
 
-      recognition.onend = () => {
-        console.log('Speech recognition ended');
+      socket.onclose = () => {
+        console.log('Deepgram WebSocket closed');
         setIsRecording(false);
+        setIsConnecting(false);
+        stream.getTracks().forEach(track => track.stop());
         
-        const finalText = finalTranscriptRef.current.trim();
+        if (mediaRecorderRef.current) {
+          mediaRecorderRef.current.stop();
+          mediaRecorderRef.current = null;
+        }
+
+        const finalText = transcriptRef.current.trim();
         if (finalText) {
           const currentHistory = chatMessagesRef.current;
           const newMessage: ChatMessage = { role: "user", content: finalText };
@@ -246,20 +271,26 @@ export default function Evaluate() {
         }
       };
 
-      recognitionRef.current = recognition;
-      recognition.start();
+      deepgramSocketRef.current = socket;
+
     } catch (error: any) {
+      setIsConnecting(false);
+      setIsRecording(false);
+      console.error('Voice recording error:', error);
       toast({
-        title: "Speech Recognition Error",
-        description: error.message || "Could not start speech recognition.",
+        title: "Microphone Access Denied",
+        description: error.message || "Please allow microphone access to use voice input.",
         variant: "destructive",
       });
     }
   }, [toast, chatMutation]);
 
   const stopVoiceRecording = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    if (deepgramSocketRef.current && deepgramSocketRef.current.readyState === WebSocket.OPEN) {
+      deepgramSocketRef.current.close();
     }
   }, []);
 
@@ -482,14 +513,18 @@ export default function Evaluate() {
                    className={`h-12 w-12 rounded-full transition-all ${
                      isRecording 
                        ? "bg-red-500 hover:bg-red-600 animate-pulse" 
-                       : "bg-purple-500 hover:bg-purple-600"
+                       : isConnecting
+                         ? "bg-yellow-500 hover:bg-yellow-600"
+                         : "bg-purple-500 hover:bg-purple-600"
                    }`}
                    onClick={handleVoiceToggle}
-                   disabled={chatMutation.isPending}
+                   disabled={chatMutation.isPending || isConnecting}
                    data-testid="button-voice-input"
                  >
                    {isRecording ? (
                      <Square className="w-5 h-5 text-white" />
+                   ) : isConnecting ? (
+                     <Loader2 className="w-5 h-5 text-white animate-spin" />
                    ) : (
                      <Mic className="w-5 h-5 text-white" />
                    )}
@@ -517,6 +552,13 @@ export default function Evaluate() {
                    </Button>
                  </div>
               </div>
+              
+              {isConnecting && (
+                <div className="flex items-center gap-2 text-sm text-yellow-400">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Connecting to Deepgram...
+                </div>
+              )}
               
               {isRecording && (
                 <div className="flex items-center gap-2 text-sm text-red-400">

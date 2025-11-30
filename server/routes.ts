@@ -9,6 +9,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import multer from "multer";
+import { createClient } from "@deepgram/sdk";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -97,6 +98,13 @@ function getOpenAIClient(): OpenAI | null {
   });
 }
 
+function getDeepgramClient() {
+  if (!process.env.DEEPGRAM_API_KEY) {
+    return null;
+  }
+  return createClient(process.env.DEEPGRAM_API_KEY);
+}
+
 const ttsRequestSchema = z.object({
   text: z.string().min(1).max(4096),
   voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]),
@@ -104,6 +112,36 @@ const ttsRequestSchema = z.object({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+
+  app.get("/api/deepgram/key", async (_req, res) => {
+    try {
+      const deepgram = getDeepgramClient();
+      if (!deepgram) {
+        return res.status(503).json({ 
+          error: "Deepgram is not configured. Please add your DEEPGRAM_API_KEY." 
+        });
+      }
+
+      const { result, error } = await deepgram.manage.createProjectKey(
+        process.env.DEEPGRAM_PROJECT_ID || "",
+        {
+          comment: "Temporary streaming key",
+          scopes: ["usage:write"],
+          time_to_live_in_seconds: 60,
+        }
+      );
+
+      if (error) {
+        console.error("Deepgram key creation error:", error);
+        return res.json({ key: process.env.DEEPGRAM_API_KEY });
+      }
+
+      res.json({ key: result?.key || process.env.DEEPGRAM_API_KEY });
+    } catch (error: any) {
+      console.error("Deepgram key error:", error);
+      res.json({ key: process.env.DEEPGRAM_API_KEY });
+    }
+  });
   
   app.post("/api/transcribe", upload.single('audio'), async (req, res) => {
     let tempFilePath: string | null = null;
