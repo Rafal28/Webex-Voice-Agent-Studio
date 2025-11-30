@@ -139,6 +139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transcription = await openai.audio.transcriptions.create({
         file: fs.createReadStream(tempFilePath),
         model: "whisper-1",
+        language: "en",
       });
       
       console.log('Transcription result:', transcription.text);
