@@ -121,16 +121,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No audio file provided" });
       }
 
+      console.log('Received audio file:', {
+        originalName: file.originalname,
+        size: file.size,
+        mimetype: file.mimetype,
+      });
+
       const originalName = file.originalname || 'recording.webm';
       const extension = path.extname(originalName) || '.webm';
       tempFilePath = file.path + extension;
       
       fs.renameSync(file.path, tempFilePath);
+      
+      const stats = fs.statSync(tempFilePath);
+      console.log('Temp file size:', stats.size, 'bytes');
 
       const transcription = await openai.audio.transcriptions.create({
         file: fs.createReadStream(tempFilePath),
         model: "whisper-1",
       });
+      
+      console.log('Transcription result:', transcription.text);
 
       res.json({ text: transcription.text });
     } catch (error: any) {

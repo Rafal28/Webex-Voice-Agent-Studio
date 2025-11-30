@@ -174,7 +174,13 @@ export default function Evaluate() {
         responseAudioRef.current = null;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100,
+        }
+      });
       
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
         ? 'audio/webm;codecs=opus' 
@@ -182,7 +188,10 @@ export default function Evaluate() {
           ? 'audio/webm' 
           : 'audio/mp4';
       
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const mediaRecorder = new MediaRecorder(stream, { 
+        mimeType,
+        audioBitsPerSecond: 128000
+      });
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
@@ -196,10 +205,27 @@ export default function Evaluate() {
         
         if (audioChunksRef.current.length === 0) {
           setIsRecording(false);
+          toast({
+            title: "No Audio Recorded",
+            description: "Please try again and speak into your microphone.",
+            variant: "destructive",
+          });
           return;
         }
 
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        console.log('Audio blob size:', audioBlob.size, 'bytes, chunks:', audioChunksRef.current.length);
+        
+        if (audioBlob.size < 1000) {
+          toast({
+            title: "Recording Too Short",
+            description: "Please record for at least 1-2 seconds.",
+            variant: "destructive",
+          });
+          setIsRecording(false);
+          return;
+        }
+        
         setIsTranscribing(true);
         setChatInput("Transcribing...");
 
@@ -234,7 +260,7 @@ export default function Evaluate() {
       };
 
       mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(100);
+      mediaRecorder.start(250);
       setIsRecording(true);
     } catch (error: any) {
       toast({
