@@ -45,7 +45,9 @@ export default function Evaluate() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [autoPlayVoice, setAutoPlayVoice] = useState(true);
   const deepgramSocketRef = useRef<WebSocket | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const chatMessagesRef = useRef<ChatMessage[]>([]);
   const transcriptRef = useRef<string>("");
@@ -168,6 +170,16 @@ export default function Evaluate() {
     setChatInput("");
   };
 
+  const floatTo16BitPCM = useCallback((float32Array: Float32Array): ArrayBuffer => {
+    const buffer = new ArrayBuffer(float32Array.length * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < float32Array.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32Array[i]));
+      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return buffer;
+  }, []);
+
   const startVoiceRecording = useCallback(async () => {
     try {
       if (responseAudioRef.current) {
@@ -189,12 +201,20 @@ export default function Evaluate() {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: 16000,
+          autoGainControl: true,
         }
       });
+      streamRef.current = stream;
+
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+      
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
 
       const socket = new WebSocket(
-        `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true`,
+        `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&encoding=linear16&sample_rate=16000`,
         ['token', key]
       );
 
@@ -203,25 +223,22 @@ export default function Evaluate() {
         setIsConnecting(false);
         setIsRecording(true);
 
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-          ? 'audio/webm;codecs=opus' 
-          : 'audio/webm';
-        
-        const mediaRecorder = new MediaRecorder(stream, { mimeType });
-        
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-            socket.send(event.data);
+        processor.onaudioprocess = (e) => {
+          if (socket.readyState === WebSocket.OPEN) {
+            const inputData = e.inputBuffer.getChannelData(0);
+            const pcmData = floatTo16BitPCM(inputData);
+            socket.send(pcmData);
           }
         };
 
-        mediaRecorder.start(250);
-        mediaRecorderRef.current = mediaRecorder;
+        source.connect(processor);
+        processor.connect(audioContext.destination);
       };
 
       socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          console.log('Deepgram message:', data);
           if (data.channel?.alternatives?.[0]?.transcript) {
             const transcript = data.channel.alternatives[0].transcript;
             const isFinal = data.is_final;
@@ -248,17 +265,27 @@ export default function Evaluate() {
         setIsRecording(false);
         setIsConnecting(false);
         stream.getTracks().forEach(track => track.stop());
+        if (audioContext.state !== 'closed') {
+          audioContext.close();
+        }
       };
 
-      socket.onclose = () => {
-        console.log('Deepgram WebSocket closed');
+      socket.onclose = (event) => {
+        console.log('Deepgram WebSocket closed', event.code, event.reason);
         setIsRecording(false);
         setIsConnecting(false);
-        stream.getTracks().forEach(track => track.stop());
         
-        if (mediaRecorderRef.current) {
-          mediaRecorderRef.current.stop();
-          mediaRecorderRef.current = null;
+        if (processorRef.current) {
+          processorRef.current.disconnect();
+          processorRef.current = null;
+        }
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+          audioContextRef.current.close();
+          audioContextRef.current = null;
         }
 
         const finalText = transcriptRef.current.trim();
@@ -283,11 +310,11 @@ export default function Evaluate() {
         variant: "destructive",
       });
     }
-  }, [toast, chatMutation]);
+  }, [toast, chatMutation, floatTo16BitPCM]);
 
   const stopVoiceRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
+    if (processorRef.current) {
+      processorRef.current.disconnect();
     }
     if (deepgramSocketRef.current && deepgramSocketRef.current.readyState === WebSocket.OPEN) {
       deepgramSocketRef.current.close();
