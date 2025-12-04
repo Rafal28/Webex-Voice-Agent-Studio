@@ -1,16 +1,64 @@
 import { Link } from "wouter";
 import { motion } from "framer-motion";
-import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare } from "lucide-react";
+import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { agentsApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import type { Agent, InsertAgent } from "@shared/schema";
 import heroBg from "@assets/generated_images/Abstract_sound_waves_visualization_010bae0d.png";
+
+const LLM_OPTIONS = [
+  { value: "gpt-4o", label: "GPT-4o (OpenAI)" },
+  { value: "gpt-4", label: "GPT-4 (OpenAI)" },
+  { value: "claude-3", label: "Claude 3 (Anthropic)" },
+  { value: "gemini-pro", label: "Gemini Pro (Google)" },
+];
+
+const VOICE_OPTIONS = [
+  { value: "alloy", label: "Alloy" },
+  { value: "echo", label: "Echo" },
+  { value: "fable", label: "Fable" },
+  { value: "onyx", label: "Onyx" },
+  { value: "nova", label: "Nova" },
+  { value: "shimmer", label: "Shimmer" },
+];
+
+const LANGUAGE_OPTIONS = [
+  { value: "English", label: "English" },
+  { value: "Spanish", label: "Spanish" },
+  { value: "French", label: "French" },
+  { value: "German", label: "German" },
+  { value: "Japanese", label: "Japanese" },
+  { value: "Chinese", label: "Chinese" },
+];
+
+const GENDER_OPTIONS = [
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "neutral", label: "Neutral" },
+];
 
 export default function Home() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    systemPrompt: "",
+    llmModel: "",
+    voiceModel: "",
+    language: "",
+    gender: "",
+  });
   
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -34,6 +82,46 @@ export default function Home() {
       });
     },
   });
+
+  const updateAgentMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<InsertAgent> }) => 
+      agentsApi.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      setEditingAgent(null);
+      toast({
+        title: "Agent Updated",
+        description: "Your changes have been saved.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Update Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleEditClick = (agent: Agent) => {
+    setEditingAgent(agent);
+    setEditForm({
+      name: agent.name,
+      systemPrompt: agent.systemPrompt || "",
+      llmModel: agent.llmModel,
+      voiceModel: agent.voiceModel,
+      language: agent.language,
+      gender: agent.gender,
+    });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingAgent) return;
+    updateAgentMutation.mutate({
+      id: editingAgent.id,
+      data: editForm,
+    });
+  };
 
   const latestAgent = agents.length > 0 ? agents[agents.length - 1] : null;
 
@@ -188,6 +276,16 @@ export default function Home() {
                     </div>
                     
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => handleEditClick(agent)}
+                        data-testid={`button-edit-agent-${agent.id}`}
+                      >
+                        <Pencil className="w-4 h-4" />
+                        Edit
+                      </Button>
                       <Link href={`/evaluate?agentId=${agent.id}`}>
                         <Button 
                           variant="outline" 
@@ -217,6 +315,127 @@ export default function Home() {
           </motion.div>
         )}
       </div>
+
+      <Dialog open={!!editingAgent} onOpenChange={(open) => !open && setEditingAgent(null)}>
+        <DialogContent className="sm:max-w-[500px]" data-testid="dialog-edit-agent">
+          <DialogHeader>
+            <DialogTitle>Edit Agent</DialogTitle>
+          </DialogHeader>
+          
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="edit-name">Name</Label>
+              <Input
+                id="edit-name"
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                data-testid="input-edit-name"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="edit-prompt">System Prompt</Label>
+              <Textarea
+                id="edit-prompt"
+                value={editForm.systemPrompt}
+                onChange={(e) => setEditForm({ ...editForm, systemPrompt: e.target.value })}
+                rows={4}
+                placeholder="Describe the persona and behavior of your AI agent..."
+                data-testid="input-edit-prompt"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label>LLM Model</Label>
+                <Select
+                  value={editForm.llmModel}
+                  onValueChange={(value) => setEditForm({ ...editForm, llmModel: value })}
+                >
+                  <SelectTrigger data-testid="select-edit-llm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LLM_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Voice Model</Label>
+                <Select
+                  value={editForm.voiceModel}
+                  onValueChange={(value) => setEditForm({ ...editForm, voiceModel: value })}
+                >
+                  <SelectTrigger data-testid="select-edit-voice">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VOICE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label>Language</Label>
+                <Select
+                  value={editForm.language}
+                  onValueChange={(value) => setEditForm({ ...editForm, language: value })}
+                >
+                  <SelectTrigger data-testid="select-edit-language">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Gender</Label>
+                <Select
+                  value={editForm.gender}
+                  onValueChange={(value) => setEditForm({ ...editForm, gender: value })}
+                >
+                  <SelectTrigger data-testid="select-edit-gender">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {GENDER_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setEditingAgent(null)}
+              data-testid="button-cancel-edit"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleSaveEdit}
+              disabled={updateAgentMutation.isPending}
+              data-testid="button-save-edit"
+            >
+              {updateAgentMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

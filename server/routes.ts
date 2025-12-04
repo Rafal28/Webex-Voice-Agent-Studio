@@ -244,6 +244,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/agents/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ error: "Invalid agent ID" });
+      }
+      const existingAgent = await storage.getAgent(id);
+      if (!existingAgent) {
+        return res.status(404).json({ error: "Agent not found" });
+      }
+      const data = insertAgentSchema.partial().parse(req.body);
+      const agent = await storage.updateAgent(id, data);
+      res.json(agent);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: fromError(error).toString() });
+      }
+      res.status(500).json({ error: "Failed to update agent" });
+    }
+  });
+
   app.delete("/api/agents/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);

@@ -31,6 +31,16 @@ export const agentsApi = {
     });
     if (!res.ok) throw new Error(await res.text());
   },
+
+  update: async (id: number, data: Partial<InsertAgent>): Promise<Agent> => {
+    const res = await fetch(`${API_BASE}/agents/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
 };
 
 export const evaluationsApi = {
