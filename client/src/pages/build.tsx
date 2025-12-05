@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -52,16 +52,26 @@ export default function Build() {
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  const [selectedRoomId, setSelectedRoomId] = useState<string>("");
+  const [messageText, setMessageText] = useState("");
 
   const { data: webexStats } = useQuery({
     queryKey: ["webex-stats"],
     queryFn: () => webexApi.getStats(),
   });
 
+  const { data: webexRooms = [] } = useQuery({
+    queryKey: ["webex-rooms"],
+    queryFn: () => webexApi.getRooms(),
+    enabled: !!webexStats?.hasToken,
+  });
+
   const syncWebexMutation = useMutation({
     mutationFn: (days: number) => webexApi.sync(days),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["webex-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["webex-rooms"] });
       toast({
         title: "Webex Sync Complete",
         description: `Synced ${result.messagesSynced} messages from ${result.roomsSynced} rooms.`,
@@ -75,6 +85,29 @@ export default function Build() {
       });
     },
   });
+
+  const sendMessageMutation = useMutation({
+    mutationFn: (data: { roomId: string; text: string }) => webexApi.sendMessage(data),
+    onSuccess: () => {
+      setMessageText("");
+      toast({
+        title: "Message Sent",
+        description: "Your message was sent to the Webex space.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Send Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendMessage = () => {
+    if (!selectedRoomId || !messageText.trim()) return;
+    sendMessageMutation.mutate({ roomId: selectedRoomId, text: messageText.trim() });
+  };
 
   const createAgentMutation = useMutation({
     mutationFn: (data: InsertAgent) => agentsApi.create(data),
@@ -382,7 +415,7 @@ export default function Build() {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-6">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-medium">Webex Messages</p>
@@ -395,7 +428,7 @@ export default function Build() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => syncWebexMutation.mutate(30)}
+                      onClick={() => syncWebexMutation.mutate(15)}
                       disabled={syncWebexMutation.isPending}
                       data-testid="button-sync-webex"
                     >
@@ -419,6 +452,58 @@ export default function Build() {
                         <Check className="w-3 h-3" />
                         Knowledge base ready - your agent can access these messages
                       </p>
+                    </div>
+                  )}
+
+                  {webexRooms.length > 0 && (
+                    <div className="pt-4 border-t border-white/5 space-y-4">
+                      <div>
+                        <Label className="text-sm font-medium mb-2 block">Send Message to Webex Space</Label>
+                        <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
+                          <SelectTrigger className="w-full bg-background border-white/10" data-testid="select-webex-room">
+                            <SelectValue placeholder="Select a space..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {webexRooms.map((room) => (
+                              <SelectItem key={room.id} value={room.id}>
+                                {room.title}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      
+                      {selectedRoomId && (
+                        <div className="space-y-3">
+                          <Textarea
+                            value={messageText}
+                            onChange={(e) => setMessageText(e.target.value)}
+                            placeholder="Type your message..."
+                            className="min-h-[80px] bg-background border-white/10 resize-none"
+                            data-testid="input-webex-message"
+                          />
+                          <div className="flex justify-end">
+                            <Button
+                              size="sm"
+                              onClick={handleSendMessage}
+                              disabled={sendMessageMutation.isPending || !messageText.trim()}
+                              data-testid="button-send-webex-message"
+                            >
+                              {sendMessageMutation.isPending ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                  Sending...
+                                </>
+                              ) : (
+                                <>
+                                  <Send className="w-4 h-4 mr-2" />
+                                  Send Message
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

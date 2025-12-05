@@ -468,6 +468,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const sendMessageSchema = z.object({
+    roomId: z.string().min(1),
+    text: z.string().optional(),
+    markdown: z.string().optional(),
+  }).refine(data => data.text || data.markdown, {
+    message: "Either text or markdown must be provided",
+  });
+
+  app.post("/api/webex/messages", async (req, res) => {
+    try {
+      const token = process.env.WEBEX_ACCESS_TOKEN;
+      if (!token) {
+        return res.status(503).json({ 
+          error: "Webex is not configured. Please add your Webex access token." 
+        });
+      }
+
+      const data = sendMessageSchema.parse(req.body);
+
+      const response = await fetch('https://webexapis.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          roomId: data.roomId,
+          ...(data.markdown ? { markdown: data.markdown } : { text: data.text }),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Webex API error:", response.status, errorData);
+        return res.status(response.status).json({ 
+          error: `Webex API error: ${response.status} ${response.statusText}` 
+        });
+      }
+
+      const result = await response.json();
+      res.json({ success: true, message: result });
+    } catch (error: any) {
+      console.error("Send Message Error:", error);
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: fromError(error).toString() });
+      }
+      res.status(500).json({ error: error.message || "Failed to send message" });
+    }
+  });
+
   app.post("/api/chat", async (req, res) => {
     try {
       const openai = getOpenAIClient();

@@ -152,6 +152,17 @@ export const transcribeApi = {
   },
 };
 
+export interface SendMessageRequest {
+  roomId: string;
+  text?: string;
+  markdown?: string;
+}
+
+export interface SendMessageResult {
+  success: boolean;
+  message: any;
+}
+
 export const webexApi = {
   getStats: async (): Promise<WebexStats> => {
     const res = await fetch(`${API_BASE}/webex/stats`);
@@ -181,6 +192,19 @@ export const webexApi = {
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || "Failed to sync Webex messages");
+    }
+    return res.json();
+  },
+
+  sendMessage: async (data: SendMessageRequest): Promise<SendMessageResult> => {
+    const res = await fetch(`${API_BASE}/webex/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to send message");
     }
     return res.json();
   },
