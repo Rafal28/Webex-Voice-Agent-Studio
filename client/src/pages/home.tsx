@@ -293,7 +293,7 @@ export default function Home() {
                           className="gap-2"
                           data-testid={`button-evaluate-agent-${agent.id}`}
                         >
-                          <Play className="w-4 h-4" />
+                          <Mic className="w-4 h-4" />
                           Chat
                         </Button>
                       </Link>
