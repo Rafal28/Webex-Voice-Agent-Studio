@@ -518,6 +518,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const webexTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+    {
+      type: "function",
+      function: {
+        name: "send_webex_message",
+        description: "Send a message to a Webex space/room. Use this when the user asks you to send a message to a Webex room or space.",
+        parameters: {
+          type: "object",
+          properties: {
+            roomTitle: {
+              type: "string",
+              description: "The title/name of the Webex room to send the message to. Match this to available rooms.",
+            },
+            message: {
+              type: "string",
+              description: "The message content to send.",
+            },
+          },
+          required: ["roomTitle", "message"],
+        },
+      },
+    },
+  ];
+
+  async function executeWebexFunction(
+    functionName: string,
+    args: Record<string, any>
+  ): Promise<{ success: boolean; result?: string; error?: string }> {
+    const token = process.env.WEBEX_ACCESS_TOKEN;
+    if (!token) {
+      return { success: false, error: "Webex is not configured" };
+    }
+
+    if (functionName === "send_webex_message") {
+      const { roomTitle, message } = args;
+      
+      const rooms = await storage.getAllWebexRooms();
+      const matchedRoom = rooms.find(
+        (r: { title: string }) => r.title.toLowerCase().includes(roomTitle.toLowerCase()) ||
+               roomTitle.toLowerCase().includes(r.title.toLowerCase())
+      );
+      
+      if (!matchedRoom) {
+        const availableRooms = rooms.slice(0, 10).map((r: { title: string }) => r.title).join(", ");
+        return { 
+          success: false, 
+          error: `Could not find a room matching "${roomTitle}". Available rooms: ${availableRooms}` 
+        };
+      }
+
+      try {
+        const response = await fetch('https://webexapis.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            roomId: matchedRoom.id,
+            text: message,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          return { 
+            success: false, 
+            error: `Failed to send message: ${response.status} ${response.statusText}` 
+          };
+        }
+
+        return { 
+          success: true, 
+          result: `Message successfully sent to "${matchedRoom.title}"` 
+        };
+      } catch (error: any) {
+        return { success: false, error: error.message || "Failed to send message" };
+      }
+    }
+
+    return { success: false, error: `Unknown function: ${functionName}` };
+  }
+
   app.post("/api/chat", async (req, res) => {
     try {
       const openai = getOpenAIClient();
@@ -530,6 +613,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = chatRequestSchema.parse(req.body);
       
       const webexMessages = await storage.getAllWebexMessages(100);
+      const webexRooms = await storage.getAllWebexRooms();
       
       let contextMessages = "";
       if (webexMessages.length > 0) {
@@ -543,15 +627,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .join("\n");
       }
       
+      let roomsList = "";
+      if (webexRooms.length > 0) {
+        roomsList = webexRooms.map((r: { title: string }) => `- ${r.title}`).join("\n");
+      }
+      
       const systemContent = data.systemPrompt || "You are a helpful AI assistant.";
       const contextSection = contextMessages 
         ? `\n\n## Recent Webex Messages (Knowledge Base):\nUse these messages as context to provide relevant and personalized responses:\n\n${contextMessages}` 
         : "";
+      const roomsSection = roomsList
+        ? `\n\n## Available Webex Rooms:\nYou can send messages to these rooms when asked:\n${roomsList}`
+        : "";
       
-      const messages: Array<{role: "system" | "user" | "assistant", content: string}> = [
+      const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = [
         {
           role: "system",
-          content: systemContent + contextSection,
+          content: systemContent + contextSection + roomsSection,
         },
       ];
       
@@ -569,15 +661,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
         content: data.message,
       });
       
+      const hasWebex = !!process.env.WEBEX_ACCESS_TOKEN && webexRooms.length > 0;
+      
       const completion = await openai.chat.completions.create({
         model: "gpt-4o",
         messages,
         max_tokens: 500,
+        tools: hasWebex ? webexTools : undefined,
+        tool_choice: hasWebex ? "auto" : undefined,
       });
 
-      const response = completion.choices[0]?.message?.content || "I'm sorry, I couldn't generate a response.";
-
-      res.json({ response });
+      const assistantMessage = completion.choices[0]?.message;
+      
+      if (assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
+        const toolCall = assistantMessage.tool_calls[0] as { id: string; type: string; function: { name: string; arguments: string } };
+        const functionName = toolCall.function.name;
+        const functionArgs = JSON.parse(toolCall.function.arguments);
+        
+        const functionResult = await executeWebexFunction(functionName, functionArgs);
+        
+        messages.push(assistantMessage);
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(functionResult),
+        });
+        
+        const followUpCompletion = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages,
+          max_tokens: 500,
+        });
+        
+        const response = followUpCompletion.choices[0]?.message?.content || 
+          (functionResult.success 
+            ? `Done! ${functionResult.result}` 
+            : `Sorry, there was an issue: ${functionResult.error}`);
+        
+        res.json({ response });
+      } else {
+        const response = assistantMessage?.content || "I'm sorry, I couldn't generate a response.";
+        res.json({ response });
+      }
     } catch (error: any) {
       console.error("Chat Error:", error);
       if (error.name === "ZodError") {
