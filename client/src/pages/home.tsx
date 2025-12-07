@@ -294,7 +294,7 @@ export default function Home() {
                           data-testid={`button-evaluate-agent-${agent.id}`}
                         >
                           <Play className="w-4 h-4" />
-                          Evaluate
+                          Chat
                         </Button>
                       </Link>
                       <Button 
