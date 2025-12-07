@@ -463,9 +463,9 @@ export default function Build() {
                           <SelectTrigger className="w-full bg-background border-white/10" data-testid="select-webex-room">
                             <SelectValue placeholder="Select a space..." />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="max-h-60 overflow-y-auto">
                             {webexRooms.map((room) => (
-                              <SelectItem key={room.id} value={room.id}>
+                              <SelectItem key={room.id} value={room.id} className="truncate">
                                 {room.title}
                               </SelectItem>
                             ))}
