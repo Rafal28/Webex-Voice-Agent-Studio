@@ -491,7 +491,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
         },
         body: JSON.stringify({
           roomId: data.roomId,
@@ -573,7 +573,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
           },
           body: JSON.stringify({
             roomId: matchedRoom.id,
@@ -583,9 +583,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
+          console.error("Webex send message error:", response.status, JSON.stringify(errorData, null, 2));
+          const errorMsg = errorData.message || errorData.errors?.[0]?.description || response.statusText;
           return { 
             success: false, 
-            error: `Failed to send message: ${response.status} ${response.statusText}` 
+            error: `Webex error (${response.status}): ${errorMsg}` 
           };
         }
 
