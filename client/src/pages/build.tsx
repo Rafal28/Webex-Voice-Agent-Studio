@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send } from "lucide-react";
+import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -55,6 +55,8 @@ export default function Build() {
   
   const [selectedRoomId, setSelectedRoomId] = useState<string>("");
   const [messageText, setMessageText] = useState("");
+  const [showFunctionCode, setShowFunctionCode] = useState(false);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const { data: webexStats } = useQuery({
     queryKey: ["webex-stats"],
@@ -187,6 +189,59 @@ export default function Build() {
       language,
       gender,
     });
+  };
+
+  const handleCopyCode = async (code: string, id: string) => {
+    await navigator.clipboard.writeText(code);
+    setCopiedCode(id);
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
+
+  const functionCallingCode = {
+    toolDefinition: `const webexTools = [
+  {
+    type: "function",
+    function: {
+      name: "send_webex_message",
+      description: "Send a message to a Webex space/room",
+      parameters: {
+        type: "object",
+        properties: {
+          roomTitle: {
+            type: "string",
+            description: "The title/name of the Webex room"
+          },
+          message: {
+            type: "string", 
+            description: "The message content to send"
+          }
+        },
+        required: ["roomTitle", "message"]
+      }
+    }
+  }
+];`,
+    apiCall: `const response = await openai.chat.completions.create({
+  model: "gpt-4o",
+  messages: [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userMessage }
+  ],
+  tools: webexTools,
+  tool_choice: "auto"
+});`,
+    handleToolCall: `if (response.choices[0].message.tool_calls) {
+  for (const toolCall of response.choices[0].message.tool_calls) {
+    if (toolCall.function.name === "send_webex_message") {
+      const args = JSON.parse(toolCall.function.arguments);
+      const result = await sendWebexMessage(
+        args.roomTitle, 
+        args.message
+      );
+      // Continue conversation with tool result
+    }
+  }
+}`
   };
 
   return (
@@ -508,6 +563,130 @@ export default function Build() {
                   )}
                 </div>
               )}
+            </div>
+          </motion.section>
+
+          <motion.section 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.3 }}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-400">
+                <Code className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-display font-semibold">Function Calling</h2>
+                <p className="text-muted-foreground text-sm">Enable your agent to execute actions like sending Webex messages.</p>
+              </div>
+            </div>
+
+            <div className="bg-card/30 p-6 rounded-2xl border border-white/5">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">OpenAI Function Calling</p>
+                    <p className="text-sm text-muted-foreground">
+                      Your agent can send Webex messages when asked using natural language.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowFunctionCode(!showFunctionCode)}
+                    data-testid="button-toggle-function-code"
+                  >
+                    {showFunctionCode ? (
+                      <>
+                        <ChevronUp className="w-4 h-4 mr-2" />
+                        Hide Code
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4 mr-2" />
+                        View Sample Code
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {showFunctionCode && (
+                  <div className="space-y-4 pt-4 border-t border-white/5">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-medium text-orange-400">1. Define the Tool</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2"
+                          onClick={() => handleCopyCode(functionCallingCode.toolDefinition, 'tool')}
+                          data-testid="button-copy-tool-code"
+                        >
+                          {copiedCode === 'tool' ? (
+                            <Check className="w-3 h-3 text-green-400" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </Button>
+                      </div>
+                      <pre className="bg-black/50 rounded-lg p-4 overflow-x-auto text-xs text-green-400 font-mono">
+                        <code>{functionCallingCode.toolDefinition}</code>
+                      </pre>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-medium text-orange-400">2. Call the API with Tools</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2"
+                          onClick={() => handleCopyCode(functionCallingCode.apiCall, 'api')}
+                          data-testid="button-copy-api-code"
+                        >
+                          {copiedCode === 'api' ? (
+                            <Check className="w-3 h-3 text-green-400" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </Button>
+                      </div>
+                      <pre className="bg-black/50 rounded-lg p-4 overflow-x-auto text-xs text-green-400 font-mono">
+                        <code>{functionCallingCode.apiCall}</code>
+                      </pre>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-medium text-orange-400">3. Handle Tool Calls</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2"
+                          onClick={() => handleCopyCode(functionCallingCode.handleToolCall, 'handle')}
+                          data-testid="button-copy-handle-code"
+                        >
+                          {copiedCode === 'handle' ? (
+                            <Check className="w-3 h-3 text-green-400" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </Button>
+                      </div>
+                      <pre className="bg-black/50 rounded-lg p-4 overflow-x-auto text-xs text-green-400 font-mono">
+                        <code>{functionCallingCode.handleToolCall}</code>
+                      </pre>
+                    </div>
+
+                    <div className="pt-3 border-t border-white/5">
+                      <p className="text-xs text-muted-foreground">
+                        When you chat with your agent, it can automatically detect when you want to send a message 
+                        and execute the action on your behalf.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </motion.section>
           
