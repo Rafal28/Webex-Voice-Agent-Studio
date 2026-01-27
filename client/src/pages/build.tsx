@@ -37,10 +37,168 @@ You are Webex Agent, a helpful and efficient personal agent.
 You are proactive, organized, and focused on providing relevant information to help the user prepare for their day.
 You are knowledgeable about the user's team and their ongoing projects.`;
 
+const TURNKEY_TEMPLATES = [
+  {
+    id: "technical-advisor",
+    name: "Technical Advisor",
+    icon: "🔧",
+    description: "Explains complex technical concepts in simple, easy-to-understand terms",
+    color: "from-blue-500/20 to-cyan-500/20",
+    borderColor: "border-blue-500/30",
+    config: {
+      agentName: "Tech Advisor",
+      llmModel: "gpt-4",
+      voiceModel: "onyx",
+      language: "en-US",
+      gender: "neutral",
+      systemPrompt: `# Personality
+
+You are a Technical Advisor, an expert at explaining complex technical concepts in simple, accessible language.
+You break down complicated topics into digestible pieces, use analogies and examples, and ensure the user truly understands.
+You are patient, thorough, and never condescending.
+
+# Capabilities
+- Explain software architecture, APIs, and system design
+- Clarify coding concepts and best practices
+- Help debug issues by asking clarifying questions
+- Provide technology recommendations based on requirements
+
+# Communication Style
+- Use simple language, avoid jargon unless necessary
+- Provide examples and analogies from everyday life
+- Check for understanding before moving on
+- Be encouraging and supportive`,
+      tools: [
+        { name: "search_documentation", description: "Search technical documentation and knowledge bases" },
+        { name: "send_webex_message", description: "Send a message to a Webex space/room" }
+      ]
+    }
+  },
+  {
+    id: "customer-support",
+    name: "Customer Support",
+    icon: "💬",
+    description: "Friendly and efficient support agent for handling customer inquiries",
+    color: "from-green-500/20 to-emerald-500/20",
+    borderColor: "border-green-500/30",
+    config: {
+      agentName: "Support Agent",
+      llmModel: "gpt-4",
+      voiceModel: "nova",
+      language: "en-US",
+      gender: "female",
+      systemPrompt: `# Personality
+
+You are a Customer Support Agent, friendly, patient, and dedicated to resolving customer issues efficiently.
+You listen carefully, show empathy, and always aim to leave customers feeling heard and helped.
+You are professional yet warm, and you take ownership of problems.
+
+# Capabilities
+- Answer frequently asked questions
+- Troubleshoot common issues step by step
+- Escalate complex issues to human agents when needed
+- Track and follow up on support tickets
+
+# Communication Style
+- Greet customers warmly and professionally
+- Acknowledge frustrations and show empathy
+- Provide clear, step-by-step solutions
+- Always confirm the issue is resolved before closing`,
+      tools: [
+        { name: "search_faq", description: "Search the FAQ and knowledge base for answers" },
+        { name: "create_ticket", description: "Create a support ticket for escalation" },
+        { name: "send_webex_message", description: "Send a message to a Webex space/room" }
+      ]
+    }
+  },
+  {
+    id: "servicenow-agent",
+    name: "ServiceNow Agent",
+    icon: "🎫",
+    description: "IT service management assistant for tickets, incidents, and workflows",
+    color: "from-orange-500/20 to-amber-500/20",
+    borderColor: "border-orange-500/30",
+    config: {
+      agentName: "ServiceNow Assistant",
+      llmModel: "gpt-4",
+      voiceModel: "alloy",
+      language: "en-US",
+      gender: "neutral",
+      systemPrompt: `# Personality
+
+You are a ServiceNow Agent, an IT service management specialist who helps users navigate IT workflows efficiently.
+You are knowledgeable about ITIL processes, incident management, and service catalogs.
+You help users create, track, and resolve IT issues quickly.
+
+# Capabilities
+- Create and update incidents, requests, and change tickets
+- Check ticket status and provide updates
+- Guide users through service catalog requests
+- Help with password resets and access requests
+- Search the knowledge base for solutions
+
+# Communication Style
+- Be efficient and professional
+- Use clear ticket references and status updates
+- Provide estimated resolution times when possible
+- Proactively offer related services or information`,
+      tools: [
+        { name: "create_incident", description: "Create a new incident ticket in ServiceNow" },
+        { name: "get_ticket_status", description: "Check the status of an existing ticket" },
+        { name: "search_knowledge_base", description: "Search ServiceNow knowledge articles" },
+        { name: "send_webex_message", description: "Send a message to a Webex space/room" }
+      ]
+    }
+  },
+  {
+    id: "pagerduty-agent",
+    name: "PagerDuty Agent",
+    icon: "🚨",
+    description: "On-call and incident management assistant for DevOps teams",
+    color: "from-red-500/20 to-pink-500/20",
+    borderColor: "border-red-500/30",
+    config: {
+      agentName: "PagerDuty Assistant",
+      llmModel: "gpt-4",
+      voiceModel: "echo",
+      language: "en-US",
+      gender: "male",
+      systemPrompt: `# Personality
+
+You are a PagerDuty Agent, an incident management specialist who helps DevOps teams respond to and resolve incidents.
+You are calm under pressure, organized, and focused on minimizing downtime.
+You help coordinate on-call schedules and ensure the right people are alerted.
+
+# Capabilities
+- Check who is currently on-call for a service
+- Trigger, acknowledge, or resolve incidents
+- Provide incident summaries and timelines
+- Help with on-call schedule management
+- Escalate incidents to additional responders
+
+# Communication Style
+- Be concise and action-oriented during incidents
+- Provide clear status updates with timestamps
+- Prioritize critical information first
+- Remain calm and organized even in high-pressure situations`,
+      tools: [
+        { name: "get_oncall", description: "Get the current on-call engineer for a service" },
+        { name: "trigger_incident", description: "Trigger a new incident in PagerDuty" },
+        { name: "acknowledge_incident", description: "Acknowledge an active incident" },
+        { name: "resolve_incident", description: "Resolve an incident" },
+        { name: "send_webex_message", description: "Send a message to a Webex space/room" }
+      ]
+    }
+  }
+];
+
 export default function Build() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  const [buildMode, setBuildMode] = useState<'choice' | 'scratch' | 'template'>('choice');
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   
   const [agentName, setAgentName] = useState("Agent Alpha-1");
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
@@ -201,6 +359,25 @@ export default function Build() {
     });
   };
 
+  const applyTemplate = (templateId: string) => {
+    const template = TURNKEY_TEMPLATES.find(t => t.id === templateId);
+    if (template) {
+      setAgentName(template.config.agentName);
+      setSystemPrompt(template.config.systemPrompt);
+      setSelectedLLM(template.config.llmModel);
+      setSelectedVoice(template.config.voiceModel);
+      setLanguage(template.config.language);
+      setGender(template.config.gender);
+      setTools(template.config.tools);
+      setSelectedTemplate(templateId);
+      setBuildMode('template');
+      toast({
+        title: "Template Applied",
+        description: `${template.name} settings loaded. Customize as needed.`,
+      });
+    }
+  };
+
   const handleCopyCode = async (code: string, id: string) => {
     await navigator.clipboard.writeText(code);
     setCopiedCode(id);
@@ -271,6 +448,98 @@ export default function Build() {
       <main className="container mx-auto px-4 py-10 max-w-4xl">
         <div className="space-y-12">
           
+          {/* Template Selection - Show when in choice mode */}
+          {buildMode === 'choice' && (
+            <motion.section 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+            >
+              <div className="text-center mb-8">
+                <h2 className="text-3xl font-display font-bold mb-3">How would you like to start?</h2>
+                <p className="text-muted-foreground">Choose a turnkey template or build from scratch</p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6 mb-8">
+                {TURNKEY_TEMPLATES.map((template) => (
+                  <motion.div
+                    key={template.id}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <Card 
+                      className={`p-6 cursor-pointer bg-gradient-to-br ${template.color} border ${template.borderColor} hover:border-white/30 transition-all`}
+                      onClick={() => applyTemplate(template.id)}
+                      data-testid={`template-card-${template.id}`}
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className="text-4xl">{template.icon}</div>
+                        <div className="flex-1">
+                          <h3 className="text-lg font-semibold mb-1">{template.name}</h3>
+                          <p className="text-sm text-muted-foreground mb-3">{template.description}</p>
+                          <div className="flex flex-wrap gap-1">
+                            {template.config.tools.slice(0, 2).map((tool, i) => (
+                              <span key={i} className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70">
+                                {tool.name.replace(/_/g, ' ')}
+                              </span>
+                            ))}
+                            {template.config.tools.length > 2 && (
+                              <span className="text-xs px-2 py-1 rounded-full bg-white/10 text-white/70">
+                                +{template.config.tools.length - 2} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  </motion.div>
+                ))}
+              </div>
+
+              <div className="text-center">
+                <div className="flex items-center gap-4 justify-center mb-4">
+                  <div className="h-px w-16 bg-white/20" />
+                  <span className="text-muted-foreground text-sm">or</span>
+                  <div className="h-px w-16 bg-white/20" />
+                </div>
+                <Button
+                  variant="outline"
+                  size="lg"
+                  onClick={() => setBuildMode('scratch')}
+                  className="px-8"
+                  data-testid="button-build-from-scratch"
+                >
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Build from Scratch
+                </Button>
+              </div>
+            </motion.section>
+          )}
+
+          {/* Show agent builder when not in choice mode */}
+          {buildMode !== 'choice' && (
+            <>
+              {/* Back to templates button */}
+              <div className="flex items-center gap-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setBuildMode('choice')}
+                  className="text-muted-foreground"
+                  data-testid="button-back-to-templates"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back to Templates
+                </Button>
+                {selectedTemplate && (
+                  <span className="text-sm text-muted-foreground">
+                    Based on: <span className="text-primary font-medium">
+                      {TURNKEY_TEMPLATES.find(t => t.id === selectedTemplate)?.name}
+                    </span>
+                  </span>
+                )}
+              </div>
+
           <motion.section 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -941,6 +1210,8 @@ export default function Build() {
                )}
              </Button>
           </div>
+          </>
+          )}
 
         </div>
       </main>
