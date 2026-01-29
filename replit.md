@@ -1,8 +1,8 @@
-# Webex AI Podcaster
+# Webex Voice Agent Studio
 
 ## Overview
 
-Webex AI Podcaster is a full-stack web application for designing and evaluating personalized voice agents for the Webex ecosystem. The platform enables users to create custom AI-powered podcaster agents by selecting LLM models, voice models, languages, and other persona attributes. Users can then evaluate these agents by generating speech samples and rating them across multiple quality dimensions (naturalness, clarity, intonation, speed).
+Webex Voice Agent Studio is a full-stack web application for designing and evaluating personalized voice agents for the Webex ecosystem. The platform enables users to create custom AI-powered podcaster agents by selecting LLM models, voice models, languages, and other persona attributes. Users can then evaluate these agents by generating speech samples and rating them across multiple quality dimensions (naturalness, clarity, intonation, speed).
 
 The application is built as a modern single-page application (SPA) with a React frontend and Express backend, using PostgreSQL for persistent storage and integrating with OpenAI's API for text-to-speech capabilities.
 

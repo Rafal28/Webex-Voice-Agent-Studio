@@ -29,7 +29,7 @@ export default function Evaluate() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioDuration, setAudioDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [inputText, setInputText] = useState("Welcome to the Webex AI Podcaster evaluation. I am ready to assist you.");
+  const [inputText, setInputText] = useState("Welcome to Webex Voice Agent Studio. I am ready to assist you.");
   
   const [ratings, setRatings] = useState({
     naturalness: 75,

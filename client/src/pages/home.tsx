@@ -148,7 +148,7 @@ export default function Home() {
             <span>Next-Gen Voice Agents</span>
           </div>
           <h1 className="text-5xl md:text-7xl font-display font-bold mb-6 tracking-tight leading-tight">
-            Webex AI <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-400">Podcaster</span>
+            Webex <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-400">Voice Agent Studio</span>
           </h1>
           <p className="text-xl text-muted-foreground leading-relaxed">
             Design personalized voice agents for the Webex ecosystem. 

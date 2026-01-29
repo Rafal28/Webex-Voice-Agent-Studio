@@ -29,7 +29,7 @@ const VOICES = [
   { id: "shimmer", name: "Shimmer", gender: "Female", style: "Soft" },
 ];
 
-const VOICE_PREVIEW_TEXT = "Hello! I'm your AI podcaster assistant. Let me help you create engaging content.";
+const VOICE_PREVIEW_TEXT = "Hello! I'm your voice agent assistant. Let me help you with your tasks.";
 
 const DEFAULT_SYSTEM_PROMPT = `# Personality
 
@@ -284,7 +284,7 @@ export default function Build() {
     onSuccess: (agent) => {
       toast({
         title: "Agent Created Successfully",
-        description: "Your podcaster agent is ready for evaluation.",
+        description: "Your voice agent is ready for evaluation.",
       });
       setLocation(`/evaluate?agentId=${agent.id}`);
     },
