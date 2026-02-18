@@ -739,6 +739,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const anamSessionSchema = z.object({
+    personaConfig: z.object({
+      name: z.string().optional(),
+      avatarId: z.string().optional(),
+      voiceId: z.string().optional(),
+      systemPrompt: z.string().optional(),
+    }).optional(),
+  });
+
+  app.post("/api/anam/session-token", async (req, res) => {
+    try {
+      const apiKey = process.env.ANAM_API_KEY;
+      if (!apiKey) {
+        return res.status(503).json({
+          error: "Anam AI is not configured. Please add your ANAM_API_KEY.",
+        });
+      }
+
+      const data = anamSessionSchema.parse(req.body || {});
+
+      const response = await fetch("https://api.anam.ai/v1/auth/session-token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          personaConfig: {
+            name: data.personaConfig?.name || "Assistant",
+            avatarId: data.personaConfig?.avatarId || "30fa96d0-26c4-4e55-94a0-517025942e18",
+            voiceId: data.personaConfig?.voiceId || "6bfbe25a-979d-40f3-a92b-5394170af54b",
+            systemPrompt: data.personaConfig?.systemPrompt || "You are a helpful AI assistant. Reply in natural speech without formatting.",
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Anam API error:", response.status, errorText);
+        return res.status(response.status).json({
+          error: `Anam API error: ${response.status} ${response.statusText}`,
+        });
+      }
+
+      const result = await response.json();
+      const sessionToken = result.sessionToken || result.token || result.session_token;
+      if (!sessionToken) {
+        console.error("Unexpected Anam API response:", JSON.stringify(result));
+        return res.status(500).json({ error: "Invalid response from Anam API" });
+      }
+      res.json({ sessionToken });
+    } catch (error: any) {
+      console.error("Anam session token error:", error);
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: fromError(error).toString() });
+      }
+      res.status(500).json({ error: "Failed to create Anam session token" });
+    }
+  });
+
+  app.get("/api/anam/status", async (_req, res) => {
+    res.json({ configured: !!process.env.ANAM_API_KEY });
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

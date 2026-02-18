@@ -209,3 +209,35 @@ export const webexApi = {
     return res.json();
   },
 };
+
+export interface AnamSessionResponse {
+  sessionToken: string;
+}
+
+export interface AnamPersonaConfig {
+  name?: string;
+  avatarId?: string;
+  voiceId?: string;
+  systemPrompt?: string;
+}
+
+export const anamApi = {
+  getSessionToken: async (personaConfig?: AnamPersonaConfig): Promise<AnamSessionResponse> => {
+    const res = await fetch(`${API_BASE}/anam/session-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ personaConfig }),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to get Anam session token");
+    }
+    return res.json();
+  },
+
+  getStatus: async (): Promise<{ configured: boolean }> => {
+    const res = await fetch(`${API_BASE}/anam/status`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+};

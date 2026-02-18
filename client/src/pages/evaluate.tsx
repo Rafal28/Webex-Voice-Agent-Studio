@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, evaluationsApi, ttsApi, chatApi, type TTSRequest } from "@/lib/api";
+import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
 
@@ -52,6 +52,13 @@ export default function Evaluate() {
   const chatMessagesRef = useRef<ChatMessage[]>([]);
   const transcriptRef = useRef<string>("");
 
+  const [avatarEnabled, setAvatarEnabled] = useState(false);
+  const [avatarStreaming, setAvatarStreaming] = useState(false);
+  const [avatarLoading, setAvatarLoading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const avatarVideoRef = useRef<HTMLVideoElement | null>(null);
+  const anamClientRef = useRef<any>(null);
+
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
     queryFn: () => agentId ? agentsApi.getById(agentId) : Promise.reject("No agent ID"),
@@ -63,6 +70,65 @@ export default function Evaluate() {
     queryFn: () => agentId ? evaluationsApi.getByAgent(agentId) : Promise.resolve([]),
     enabled: !!agentId,
   });
+
+  const { data: anamStatus } = useQuery({
+    queryKey: ["anam-status"],
+    queryFn: () => anamApi.getStatus(),
+  });
+
+  const startAvatar = useCallback(async () => {
+    if (!agent) return;
+    setAvatarLoading(true);
+    setAvatarError(null);
+    try {
+      const { sessionToken } = await anamApi.getSessionToken({
+        name: agent.name,
+        systemPrompt: agent.systemPrompt || `You are ${agent.name}, a helpful AI assistant. Reply in natural speech without formatting. Add pauses using '...'`,
+      });
+
+      const { createClient } = await import("@anam-ai/js-sdk");
+      const client = createClient(sessionToken);
+
+      anamClientRef.current = client;
+
+      if (avatarVideoRef.current) {
+        await client.streamToVideoElement(avatarVideoRef.current.id);
+        setAvatarStreaming(true);
+        setAvatarEnabled(true);
+      } else {
+        throw new Error("Video element not ready. Please try again.");
+      }
+    } catch (error: any) {
+      console.error("Avatar start error:", error);
+      setAvatarError(error.message || "Failed to start avatar");
+    } finally {
+      setAvatarLoading(false);
+    }
+  }, [agent]);
+
+  const stopAvatar = useCallback(async () => {
+    try {
+      if (anamClientRef.current) {
+        await anamClientRef.current.stopStreaming();
+        anamClientRef.current = null;
+      }
+    } catch (error) {
+      console.error("Avatar stop error:", error);
+    }
+    setAvatarStreaming(false);
+    setAvatarEnabled(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (anamClientRef.current) {
+        try {
+          anamClientRef.current.stopStreaming();
+        } catch {}
+        anamClientRef.current = null;
+      }
+    };
+  }, []);
 
   const VALID_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
 
@@ -480,6 +546,70 @@ export default function Evaluate() {
       <main className="flex-1 grid lg:grid-cols-12 gap-0 overflow-hidden">
         
         <div className="lg:col-span-7 flex flex-col border-r border-white/10 bg-card/20 p-6 overflow-y-auto">
+           {anamStatus?.configured && (
+             <div className="mb-4">
+               <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-black/40">
+                 <video
+                   id="anam-video-element"
+                   ref={avatarVideoRef}
+                   autoPlay
+                   playsInline
+                   className={`w-full rounded-2xl transition-all ${avatarStreaming ? 'block' : 'hidden'}`}
+                   style={{ maxHeight: 400, objectFit: 'cover' }}
+                   data-testid="video-avatar"
+                 />
+                 {!avatarStreaming && !avatarLoading && (
+                   <div className="flex flex-col items-center justify-center py-8 gap-3">
+                     <div className="h-16 w-16 rounded-full bg-gradient-to-br from-primary/20 to-cyan-400/20 border border-white/10 flex items-center justify-center">
+                       <User className="w-8 h-8 text-primary/60" />
+                     </div>
+                     <p className="text-sm text-muted-foreground">Interactive AI Avatar</p>
+                     <Button
+                       size="sm"
+                       className="bg-gradient-to-r from-primary to-cyan-400 text-black font-medium hover:opacity-90"
+                       onClick={startAvatar}
+                       data-testid="button-start-avatar"
+                     >
+                       <Video className="w-4 h-4 mr-2" />
+                       Start Avatar
+                     </Button>
+                   </div>
+                 )}
+
+                 {avatarLoading && (
+                   <div className="flex flex-col items-center justify-center py-8 gap-3">
+                     <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                     <p className="text-sm text-muted-foreground">Connecting to avatar...</p>
+                   </div>
+                 )}
+
+                 {avatarStreaming && (
+                   <div className="absolute top-3 right-3 flex items-center gap-2">
+                     <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
+                       <span className="w-1.5 h-1.5 bg-green-400 rounded-full mr-1.5 animate-pulse inline-block" />
+                       Live
+                     </Badge>
+                     <Button
+                       size="icon"
+                       variant="ghost"
+                       className="h-7 w-7 bg-black/50 hover:bg-black/70 text-white rounded-full"
+                       onClick={stopAvatar}
+                       data-testid="button-stop-avatar"
+                     >
+                       <VideoOff className="w-3.5 h-3.5" />
+                     </Button>
+                   </div>
+                 )}
+
+                 {avatarError && (
+                   <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20">
+                     <p className="text-xs text-red-400">{avatarError}</p>
+                   </div>
+                 )}
+               </div>
+             </div>
+           )}
+
            <div className="flex-1 space-y-4 overflow-y-auto">
               {chatMessages.length === 0 ? (
                 <div className="flex gap-4 max-w-2xl">
