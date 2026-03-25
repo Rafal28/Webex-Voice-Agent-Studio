@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { Link, useLocation } from "wouter";
+import { useState, useRef, useEffect } from "react";
+import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2, Search, Mail, Calendar, FileText, Users, CreditCard, Phone, Workflow, Database, Cloud, Shield, Zap, Github, ExternalLink, X, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -356,10 +356,14 @@ const AVAILABLE_INTEGRATIONS = [
 
 export default function Build() {
   const [, setLocation] = useLocation();
+  const search = useSearch();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const urlParams = new URLSearchParams(search);
+  const urlAgentId = urlParams.get("agentId") ? parseInt(urlParams.get("agentId")!) : null;
   
-  const [buildMode, setBuildMode] = useState<'choice' | 'scratch' | 'template'>('choice');
+  const [buildMode, setBuildMode] = useState<'choice' | 'scratch' | 'template'>(urlAgentId ? 'scratch' : 'choice');
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   
   const [agentName, setAgentName] = useState("Agent Alpha-1");
@@ -402,7 +406,24 @@ export default function Build() {
   const [newKbTitle, setNewKbTitle] = useState("");
   const [newKbContent, setNewKbContent] = useState("");
   const [kbLoading, setKbLoading] = useState(false);
-  const [savedAgentId, setSavedAgentId] = useState<number | null>(null);
+  const [savedAgentId, setSavedAgentId] = useState<number | null>(urlAgentId);
+
+  const { data: existingAgent } = useQuery({
+    queryKey: ["agent", urlAgentId],
+    queryFn: () => agentsApi.getById(urlAgentId!),
+    enabled: !!urlAgentId,
+  });
+
+  useEffect(() => {
+    if (existingAgent) {
+      setAgentName(existingAgent.name);
+      setSystemPrompt(existingAgent.systemPrompt || DEFAULT_SYSTEM_PROMPT);
+      setSelectedLLM(existingAgent.llmModel);
+      setSelectedVoice(existingAgent.voiceModel);
+      setLanguage(existingAgent.language);
+      setGender(existingAgent.gender || "neutral");
+    }
+  }, [existingAgent]);
 
   const { data: webexStats } = useQuery({
     queryKey: ["webex-stats"],

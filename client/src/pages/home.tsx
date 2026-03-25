@@ -1,4 +1,4 @@
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -49,6 +49,7 @@ const GENDER_OPTIONS = [
 export default function Home() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [editForm, setEditForm] = useState({
@@ -104,15 +105,7 @@ export default function Home() {
   });
 
   const handleEditClick = (agent: Agent) => {
-    setEditingAgent(agent);
-    setEditForm({
-      name: agent.name,
-      systemPrompt: agent.systemPrompt || "",
-      llmModel: agent.llmModel,
-      voiceModel: agent.voiceModel,
-      language: agent.language,
-      gender: agent.gender,
-    });
+    setLocation(`/build?agentId=${agent.id}`);
   };
 
   const handleSaveEdit = () => {
