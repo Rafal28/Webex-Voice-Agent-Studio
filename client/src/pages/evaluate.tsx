@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -56,8 +56,25 @@ export default function Evaluate() {
   const [avatarStreaming, setAvatarStreaming] = useState(false);
   const [avatarLoading, setAvatarLoading] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [avatarFullscreen, setAvatarFullscreen] = useState(false);
   const avatarVideoRef = useRef<HTMLVideoElement | null>(null);
+  const avatarContainerRef = useRef<HTMLDivElement | null>(null);
   const anamClientRef = useRef<any>(null);
+
+  useEffect(() => {
+    const onFsChange = () => setAvatarFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  const toggleAvatarFullscreen = useCallback(() => {
+    if (!avatarContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      avatarContainerRef.current.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, []);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -548,14 +565,17 @@ export default function Evaluate() {
         <div className="lg:col-span-7 flex flex-col border-r border-white/10 bg-card/20 p-6 overflow-y-auto">
            {anamStatus?.configured && (
              <div className="mb-4">
-               <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-black/40">
+               <div
+                 ref={avatarContainerRef}
+                 className="relative rounded-2xl overflow-hidden border border-white/10 bg-black/40 [&:fullscreen]:rounded-none [&:fullscreen]:border-none"
+               >
                  <video
                    id="anam-video-element"
                    ref={avatarVideoRef}
                    autoPlay
                    playsInline
-                   className={`w-full rounded-2xl transition-all ${avatarStreaming ? 'block' : 'hidden'}`}
-                   style={{ maxHeight: 400, objectFit: 'cover' }}
+                   className={`w-full transition-all [&:fullscreen]:h-screen [&:fullscreen]:object-contain ${avatarStreaming ? 'block' : 'hidden'}`}
+                   style={{ maxHeight: avatarFullscreen ? '100vh' : 400, objectFit: 'cover' }}
                    data-testid="video-avatar"
                  />
                  {!avatarStreaming && !avatarLoading && (
@@ -589,6 +609,16 @@ export default function Evaluate() {
                        <span className="w-1.5 h-1.5 bg-green-400 rounded-full mr-1.5 animate-pulse inline-block" />
                        Live
                      </Badge>
+                     <Button
+                       size="icon"
+                       variant="ghost"
+                       className="h-7 w-7 bg-black/50 hover:bg-black/70 text-white rounded-full"
+                       onClick={toggleAvatarFullscreen}
+                       data-testid="button-avatar-fullscreen"
+                       title={avatarFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                     >
+                       {avatarFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                     </Button>
                      <Button
                        size="icon"
                        variant="ghost"
