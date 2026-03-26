@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2, Camera, ScanLine, X, RotateCcw, CheckCircle2, Wallet, TrendingUp, ArrowUpRight } from "lucide-react";
@@ -1226,7 +1227,7 @@ export default function Evaluate() {
 
       <canvas ref={ocrCanvasRef} className="hidden" />
 
-      {ocrOpen && (
+      {ocrOpen && createPortal(
         <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col" data-testid="ocr-modal">
           {ocrAutoModeRef.current && (
             <div className="bg-cyan-500/10 border-b border-cyan-500/20 px-6 py-2 flex items-center gap-2 text-cyan-300 text-xs">
@@ -1367,7 +1368,10 @@ export default function Evaluate() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        avatarFullscreen && avatarContainerRef.current
+          ? avatarContainerRef.current
+          : document.body
       )}
     </div>
   );
