@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2 } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2, Camera, ScanLine, X, RotateCcw, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, type TTSRequest } from "@/lib/api";
+import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
 
@@ -75,6 +75,91 @@ export default function Evaluate() {
       document.exitFullscreen().catch(() => {});
     }
   }, []);
+
+  const [ocrOpen, setOcrOpen] = useState(false);
+  const [ocrStream, setOcrStream] = useState<MediaStream | null>(null);
+  const [ocrCapture, setOcrCapture] = useState<string | null>(null);
+  const [ocrText, setOcrText] = useState<string | null>(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const ocrVideoRef = useRef<HTMLVideoElement | null>(null);
+  const ocrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const openOcrCamera = useCallback(async () => {
+    setOcrOpen(true);
+    setOcrCapture(null);
+    setOcrText(null);
+    setOcrError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      setOcrStream(stream);
+      setTimeout(() => {
+        if (ocrVideoRef.current) {
+          ocrVideoRef.current.srcObject = stream;
+          ocrVideoRef.current.play().catch(() => {});
+        }
+      }, 100);
+    } catch {
+      setOcrError("Could not access camera. Please allow camera permission and try again.");
+    }
+  }, []);
+
+  const closeOcrCamera = useCallback(() => {
+    if (ocrStream) {
+      ocrStream.getTracks().forEach(t => t.stop());
+      setOcrStream(null);
+    }
+    setOcrOpen(false);
+    setOcrCapture(null);
+    setOcrText(null);
+    setOcrError(null);
+  }, [ocrStream]);
+
+  const captureOcrFrame = useCallback(() => {
+    const video = ocrVideoRef.current;
+    const canvas = ocrCanvasRef.current;
+    if (!video || !canvas) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    setOcrCapture(dataUrl);
+    if (ocrStream) {
+      ocrStream.getTracks().forEach(t => t.stop());
+      setOcrStream(null);
+    }
+    setOcrLoading(true);
+    setOcrText(null);
+    setOcrError(null);
+    ocrApi.extractText(dataUrl)
+      .then(({ text }) => setOcrText(text))
+      .catch(e => setOcrError(e.message || "Failed to extract text"))
+      .finally(() => setOcrLoading(false));
+  }, [ocrStream]);
+
+  const retakeOcr = useCallback(async () => {
+    setOcrCapture(null);
+    setOcrText(null);
+    setOcrError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      setOcrStream(stream);
+      setTimeout(() => {
+        if (ocrVideoRef.current) {
+          ocrVideoRef.current.srcObject = stream;
+          ocrVideoRef.current.play().catch(() => {});
+        }
+      }, 100);
+    } catch {
+      setOcrError("Could not access camera.");
+    }
+  }, []);
+
+  const sendOcrToChat = useCallback(() => {
+    if (!ocrText) return;
+    setChatInput(prev => prev ? `${prev}\n\n[Scanned text]\n${ocrText}` : `[Scanned text]\n${ocrText}`);
+    closeOcrCamera();
+  }, [ocrText, closeOcrCamera]);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -697,7 +782,17 @@ export default function Evaluate() {
               <div className="flex items-center gap-3">
                  <Button
                    size="icon"
-                   className={`h-12 w-12 rounded-full transition-all ${
+                   variant="outline"
+                   className="h-12 w-12 rounded-full border-white/10 bg-white/5 hover:bg-white/10 hover:border-cyan-500/40 text-muted-foreground hover:text-cyan-400 shrink-0"
+                   onClick={openOcrCamera}
+                   title="Scan text with camera"
+                   data-testid="button-ocr-scan"
+                 >
+                   <ScanLine className="w-5 h-5" />
+                 </Button>
+                 <Button
+                   size="icon"
+                   className={`h-12 w-12 rounded-full transition-all shrink-0 ${
                      isRecording 
                        ? "bg-red-500 hover:bg-red-600 animate-pulse" 
                        : isConnecting
@@ -924,6 +1019,146 @@ export default function Evaluate() {
         </div>
 
       </main>
+
+      <canvas ref={ocrCanvasRef} className="hidden" />
+
+      {ocrOpen && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col" data-testid="ocr-modal">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
+                <ScanLine className="w-4 h-4 text-cyan-400" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-sm">Scan Text</h2>
+                <p className="text-xs text-muted-foreground">
+                  {!ocrCapture ? "Point camera at text and capture" : ocrLoading ? "Extracting text..." : "Text extracted"}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={closeOcrCamera}
+              className="text-muted-foreground hover:text-white"
+              data-testid="button-ocr-close"
+            >
+              <X className="w-5 h-5" />
+            </Button>
+          </div>
+
+          <div className="flex-1 flex flex-col lg:flex-row gap-0 overflow-hidden">
+            <div className="flex-1 flex flex-col items-center justify-center p-6 bg-black">
+              {!ocrCapture ? (
+                <>
+                  <div className="relative w-full max-w-2xl">
+                    <video
+                      ref={ocrVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full rounded-xl border border-white/10 bg-black"
+                      style={{ maxHeight: "60vh", objectFit: "cover" }}
+                      data-testid="video-ocr-camera"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="border-2 border-cyan-400/60 rounded-lg w-4/5 h-2/3 relative">
+                        <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-cyan-400 rounded-tl" />
+                        <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-cyan-400 rounded-tr" />
+                        <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-cyan-400 rounded-bl" />
+                        <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-cyan-400 rounded-br" />
+                      </div>
+                    </div>
+                  </div>
+                  {ocrError && (
+                    <p className="text-sm text-red-400 mt-4 text-center">{ocrError}</p>
+                  )}
+                  {!ocrError && (
+                    <Button
+                      className="mt-6 bg-cyan-500 hover:bg-cyan-400 text-black font-semibold px-8 h-12 rounded-full"
+                      onClick={captureOcrFrame}
+                      disabled={!ocrStream}
+                      data-testid="button-ocr-capture"
+                    >
+                      <Camera className="w-5 h-5 mr-2" />
+                      Capture
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <div className="w-full max-w-2xl">
+                  <img
+                    src={ocrCapture}
+                    alt="Captured"
+                    className="w-full rounded-xl border border-white/10 object-contain"
+                    style={{ maxHeight: "55vh" }}
+                    data-testid="img-ocr-capture"
+                  />
+                  <div className="flex justify-center mt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={retakeOcr}
+                      className="gap-2 border-white/10"
+                      data-testid="button-ocr-retake"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      Retake
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="lg:w-96 border-t lg:border-t-0 lg:border-l border-white/10 flex flex-col bg-background/50 p-6">
+              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                <CheckCircle2 className={`w-4 h-4 ${ocrText ? "text-green-400" : "text-muted-foreground/40"}`} />
+                Extracted Text
+              </h3>
+
+              {ocrLoading && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                  <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
+                  <p className="text-sm">Reading text with AI...</p>
+                </div>
+              )}
+
+              {!ocrLoading && ocrError && (
+                <div className="flex-1 flex items-center justify-center">
+                  <p className="text-sm text-red-400 text-center">{ocrError}</p>
+                </div>
+              )}
+
+              {!ocrLoading && ocrText && (
+                <>
+                  <div
+                    className="flex-1 text-sm bg-white/5 rounded-xl border border-white/10 p-4 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed text-foreground/90"
+                    data-testid="text-ocr-result"
+                  >
+                    {ocrText}
+                  </div>
+                  <div className="pt-4 flex gap-2">
+                    <Button
+                      className="flex-1 bg-cyan-500 hover:bg-cyan-400 text-black font-semibold"
+                      onClick={sendOcrToChat}
+                      data-testid="button-ocr-send"
+                    >
+                      <MessageCircle className="w-4 h-4 mr-2" />
+                      Send to Agent
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {!ocrLoading && !ocrText && !ocrError && (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground/40 text-sm text-center">
+                  Capture an image to extract text
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -471,6 +471,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/ocr", async (req, res) => {
+    try {
+      const openai = getOpenAIClient();
+      if (!openai) {
+        return res.status(503).json({ error: "OpenAI API key is not configured." });
+      }
+      const { image } = req.body;
+      if (!image || typeof image !== "string") {
+        return res.status(400).json({ error: "Missing image field (base64 data URL)" });
+      }
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image_url",
+                image_url: { url: image, detail: "high" },
+              },
+              {
+                type: "text",
+                text: "Extract and return all visible text from this image exactly as it appears. Preserve line breaks and formatting as much as possible. If there is no text in the image, respond with: [No text detected]",
+              },
+            ],
+          },
+        ],
+        max_tokens: 2000,
+      });
+      const text = response.choices[0]?.message?.content?.trim() || "[No text detected]";
+      res.json({ text });
+    } catch (error: any) {
+      console.error("OCR Error:", error);
+      res.status(500).json({ error: error.message || "Failed to extract text from image" });
+    }
+  });
+
   app.get("/api/webex/rooms", async (_req, res) => {
     try {
       const rooms = await storage.getAllWebexRooms();

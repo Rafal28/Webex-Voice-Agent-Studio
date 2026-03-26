@@ -297,3 +297,18 @@ export const anamApi = {
     return res.json();
   },
 };
+
+export const ocrApi = {
+  extractText: async (imageDataUrl: string): Promise<{ text: string }> => {
+    const res = await fetch(`${API_BASE}/ocr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: imageDataUrl }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "OCR failed");
+    }
+    return res.json();
+  },
+};
