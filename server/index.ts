@@ -23,7 +23,14 @@ if (process.env.NODE_ENV === "production") {
   app.use((req: Request, res: Response, next: NextFunction) => {
     const host = (req.headers.host || "").toLowerCase().split(":")[0];
     if (host === OLD_DOMAIN || host.endsWith("." + OLD_DOMAIN)) {
-      return res.redirect(301, `https://${CANONICAL_DOMAIN}${req.originalUrl}`);
+      return res.status(410).send(`
+        <!DOCTYPE html><html><head><title>410 Gone</title></head>
+        <body style="font-family:sans-serif;text-align:center;padding:80px">
+          <h1>410 – Gone</h1>
+          <p>This URL is no longer active.</p>
+          <p>Please visit <a href="https://${CANONICAL_DOMAIN}">https://${CANONICAL_DOMAIN}</a></p>
+        </body></html>
+      `);
     }
     next();
   });
