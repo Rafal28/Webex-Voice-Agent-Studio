@@ -774,6 +774,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { message, agentId } = req.body;
     if (!message) return res.status(400).json({ error: "message required" });
 
+    const openai = getOpenAIClient();
     let name: string | null = null;
     let last4: string | null = null;
 
@@ -837,6 +838,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: "message required" });
 
+    const openai = getOpenAIClient();
     let code: string | null = null;
 
     const cleaned = message.replace(/\s+/g, "");
