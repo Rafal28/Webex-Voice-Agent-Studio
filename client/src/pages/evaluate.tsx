@@ -88,6 +88,12 @@ export default function Evaluate() {
   const ocrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const ocrAutoModeRef = useRef(false);
 
+  // Banking auth state machine for avatar-native flow
+  const bankingAvatarStateRef = useRef<"idle" | "awaiting_identity" | "otp_sent" | "authenticated">("idle");
+  const bankingOtpTokenRef = useRef<string | null>(null);
+  const bankingAvatarProcessingRef = useRef(false);
+  const lastSeenHumanMsgIdRef = useRef<string | null>(null);
+
   const [bankBalance, setBankBalance] = useState(2450.00);
   const [lastDeposit, setLastDeposit] = useState<{ amount: number; newBalance: number } | null>(null);
 
@@ -203,39 +209,152 @@ export default function Evaluate() {
 
       const lastSeenPersonaMsgId = { current: null as string | null };
 
+      // ── Banking identity triggers from avatar ──────────────────────────────
+      const IDENTITY_ASK_TRIGGERS = [
+        "last 4 digits", "last four digits", "last four of", "last 4 of",
+        "verify your identity", "full name and", "your full name",
+        "name and the last", "name and last"
+      ];
+      const CODE_ASK_TRIGGERS = [
+        "6-digit code", "six-digit", "verification code", "code you received",
+        "code sent", "say the code", "read me the code"
+      ];
+
       client.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages: any[]) => {
+        // ── Handle new persona (avatar) messages ────────────────────────────
         const personaMsgs = messages.filter((m: any) => m.role === "persona" && !m.interrupted);
         const latestPersona = personaMsgs[personaMsgs.length - 1];
-        if (!latestPersona || latestPersona.id === lastSeenPersonaMsgId.current) return;
-        lastSeenPersonaMsgId.current = latestPersona.id;
+        if (latestPersona && latestPersona.id !== lastSeenPersonaMsgId.current) {
+          lastSeenPersonaMsgId.current = latestPersona.id;
+          const content: string = latestPersona.content;
+          const lower = content.toLowerCase();
 
-        const content: string = latestPersona.content;
-        const lower = content.toLowerCase();
+          setChatMessages(prev => {
+            const updated = [...prev, { role: "assistant" as const, content }];
+            chatMessagesRef.current = updated;
+            return updated;
+          });
 
+          if (CHECK_TRIGGERS.some(t => lower.includes(t))) {
+            ocrAutoModeRef.current = true;
+            openOcrCamera();
+          }
+
+          for (const pattern of DEPOSIT_PATTERNS) {
+            const match = content.match(pattern);
+            if (match) {
+              const amount = parseFloat(match[1].replace(/,/g, ""));
+              if (!isNaN(amount) && amount > 0) {
+                setBankBalance(prev => {
+                  const newBalance = Math.round((prev + amount) * 100) / 100;
+                  setLastDeposit({ amount, newBalance });
+                  return newBalance;
+                });
+                break;
+              }
+            }
+          }
+
+          // Advance banking state machine based on what avatar asked
+          if (bankingAvatarStateRef.current === "idle" &&
+              IDENTITY_ASK_TRIGGERS.some(t => lower.includes(t))) {
+            bankingAvatarStateRef.current = "awaiting_identity";
+            console.log("[Banking Avatar] State → awaiting_identity");
+          }
+          if (bankingAvatarStateRef.current === "otp_sent" &&
+              CODE_ASK_TRIGGERS.some(t => lower.includes(t))) {
+            console.log("[Banking Avatar] Confirmed awaiting code");
+          }
+        }
+
+        // ── Handle new human (user) messages ───────────────────────────────
+        const humanMsgs = messages.filter((m: any) => m.role === "human" || m.role === "user");
+        const latestHuman = humanMsgs[humanMsgs.length - 1];
+        if (!latestHuman || latestHuman.id === lastSeenHumanMsgIdRef.current) return;
+        lastSeenHumanMsgIdRef.current = latestHuman.id;
+
+        const humanContent: string = latestHuman.content || "";
+        console.log("[Banking Avatar] User said:", humanContent, "| State:", bankingAvatarStateRef.current);
+
+        // Add user message to chat panel
         setChatMessages(prev => {
-          const updated = [...prev, { role: "assistant" as const, content }];
+          if (prev.some(m => m.role === "user" && m.content === humanContent)) return prev;
+          const updated = [...prev, { role: "user" as const, content: humanContent }];
           chatMessagesRef.current = updated;
           return updated;
         });
 
-        if (CHECK_TRIGGERS.some(t => lower.includes(t))) {
-          ocrAutoModeRef.current = true;
-          openOcrCamera();
+        // State: waiting for name + last4
+        if (bankingAvatarStateRef.current === "awaiting_identity" && !bankingAvatarProcessingRef.current) {
+          bankingAvatarProcessingRef.current = true;
+          console.log("[Banking Avatar] Extracting identity from:", humanContent);
+          fetch("/api/banking/extract-and-send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: humanContent, agentId: agent?.id })
+          })
+            .then(r => r.json())
+            .then(data => {
+              console.log("[Banking Avatar] extract-and-send result:", data);
+              bankingAvatarProcessingRef.current = false;
+              if (data.token) {
+                bankingOtpTokenRef.current = data.token;
+                bankingAvatarStateRef.current = "otp_sent";
+              } else {
+                bankingAvatarStateRef.current = "idle";
+              }
+              // Override avatar speech with our tool-aware response
+              setTimeout(() => {
+                client.talk(data.response);
+              }, 600);
+            })
+            .catch(err => {
+              console.error("[Banking Avatar] extract-and-send error:", err);
+              bankingAvatarProcessingRef.current = false;
+            });
         }
 
-        for (const pattern of DEPOSIT_PATTERNS) {
-          const match = content.match(pattern);
-          if (match) {
-            const amount = parseFloat(match[1].replace(/,/g, ""));
-            if (!isNaN(amount) && amount > 0) {
-              setBankBalance(prev => {
-                const newBalance = Math.round((prev + amount) * 100) / 100;
-                setLastDeposit({ amount, newBalance });
-                return newBalance;
-              });
-              break;
-            }
-          }
+        // State: waiting for 6-digit OTP code
+        else if (bankingAvatarStateRef.current === "otp_sent" && !bankingAvatarProcessingRef.current) {
+          bankingAvatarProcessingRef.current = true;
+          console.log("[Banking Avatar] Extracting code from:", humanContent);
+          fetch("/api/banking/extract-code", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: humanContent })
+          })
+            .then(r => r.json())
+            .then(data => {
+              bankingAvatarProcessingRef.current = false;
+              if (!data.code) {
+                console.log("[Banking Avatar] No 6-digit code found yet");
+                return;
+              }
+              console.log("[Banking Avatar] Verifying code:", data.code);
+              return fetch("/api/auth/verify-code", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: bankingOtpTokenRef.current, code: data.code })
+              })
+                .then(r => r.json())
+                .then(verifyData => {
+                  if (verifyData.verified) {
+                    bankingAvatarStateRef.current = "authenticated";
+                    setIsAuthenticated(true);
+                    setTimeout(() => {
+                      client.talk("Thank you, your identity has been verified. I've blocked your card immediately. A replacement will be shipped to your address on file and should arrive within 3 to 5 business days. Is there anything else I can help you with?");
+                    }, 600);
+                  } else {
+                    setTimeout(() => {
+                      client.talk("I'm sorry, that code doesn't match. Please check the SMS and try again, or I can send you a new code.");
+                    }, 600);
+                  }
+                });
+            })
+            .catch(err => {
+              console.error("[Banking Avatar] code verify error:", err);
+              bankingAvatarProcessingRef.current = false;
+            });
         }
       });
 
@@ -267,6 +386,11 @@ export default function Evaluate() {
     avatarStreamingRef.current = false;
     setAvatarStreaming(false);
     setAvatarEnabled(false);
+    // Reset banking state machine
+    bankingAvatarStateRef.current = "idle";
+    bankingOtpTokenRef.current = null;
+    bankingAvatarProcessingRef.current = false;
+    lastSeenHumanMsgIdRef.current = null;
   }, []);
 
   useEffect(() => {

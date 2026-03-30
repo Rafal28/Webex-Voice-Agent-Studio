@@ -767,6 +767,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
     otpStore.delete(token);
     res.json({ verified: true });
   });
+
+  // ── Avatar-native banking flow helpers ─────────────────────────────────────
+  // Extract name+last4 from free-form avatar speech, then send OTP
+  app.post("/api/banking/extract-and-send", async (req, res) => {
+    const { message, agentId } = req.body;
+    if (!message) return res.status(400).json({ error: "message required" });
+
+    let name: string | null = null;
+    let last4: string | null = null;
+
+    if (openai) {
+      try {
+        const extraction = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: `Extract a person's full name and the last 4 digits of their card from the following spoken message. The digits may be written as a number like "6789" or spoken as words like "six seven eight nine". Return JSON with keys "name" (string) and "last4" (4-digit string). If you cannot find both, return {"name": null, "last4": null}.`
+            },
+            { role: "user", content: message }
+          ],
+          max_tokens: 80,
+          response_format: { type: "json_object" }
+        });
+        const parsed = JSON.parse(extraction.choices[0]?.message?.content || "{}");
+        name = parsed.name || null;
+        last4 = parsed.last4 ? String(parsed.last4).replace(/\D/g, "").slice(-4) : null;
+      } catch (e) {
+        console.error("[Banking] extract-and-send LLM error:", e);
+      }
+    }
+
+    if (!name || !last4 || last4.length !== 4) {
+      return res.json({ token: null, response: "I didn't catch that clearly. Could you please tell me your full name and the last 4 digits of your card?" });
+    }
+
+    const found = await lookupCustomerFromKB(agentId, name, last4);
+    if (!found) {
+      return res.json({ token: null, response: `I couldn't find an account matching that name and card number. Please double-check and try again.` });
+    }
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    otpStore.set(token, { code, expiresAt: Date.now() + 10 * 60 * 1000, phone: found.phone });
+
+    const sid  = process.env.TWILIO_ACCOUNT_SID;
+    const auth = process.env.TWILIO_AUTH_TOKEN;
+    const from = process.env.TWILIO_PHONE_NUMBER;
+
+    if (!sid || !auth || !from) {
+      console.warn("[Banking] Twilio not configured — OTP (dev):", code);
+      return res.json({ token, maskedPhone: found.maskedPhone, devCode: code, response: `I found your account. For development, your code is ${code}. Please say the 6-digit code to continue.` });
+    }
+
+    try {
+      const twilioClient = (await import("twilio")).default(sid, auth);
+      await twilioClient.messages.create({ body: `Your Webex Banking verification code is: ${code}`, from, to: found.phone });
+      const last2 = found.maskedPhone.slice(-2);
+      return res.json({ token, maskedPhone: found.maskedPhone, response: `I found your account. I've just sent a 6-digit verification code to the phone number on file ending in ${last2}. Please say the code out loud when you're ready.` });
+    } catch (err: any) {
+      console.error("[Banking] Twilio send error:", err.message);
+      return res.json({ token, maskedPhone: found.maskedPhone, devCode: code, response: `I found your account but had trouble sending the SMS. Your code is ${code} — please say it out loud.` });
+    }
+  });
+
+  // Extract 6-digit OTP code from free-form avatar speech
+  app.post("/api/banking/extract-code", async (req, res) => {
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: "message required" });
+
+    let code: string | null = null;
+
+    const cleaned = message.replace(/\s+/g, "");
+    const directMatch = cleaned.match(/\d{6}/);
+    if (directMatch) {
+      code = directMatch[0];
+    } else if (openai) {
+      try {
+        const extraction = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: `Extract a 6-digit numeric code from this spoken message. The digits may be spoken individually like "one two three four five six". Return JSON: {"code": "123456"} or {"code": null}.` },
+            { role: "user", content: message }
+          ],
+          max_tokens: 40,
+          response_format: { type: "json_object" }
+        });
+        const parsed = JSON.parse(extraction.choices[0]?.message?.content || "{}");
+        code = parsed.code ? String(parsed.code).replace(/\D/g, "") : null;
+      } catch (e) {
+        console.error("[Banking] extract-code LLM error:", e);
+      }
+    }
+
+    if (!code || code.length !== 6) return res.json({ code: null });
+    res.json({ code });
+  });
   // ──────────────────────────────────────────────────────────────────────────
 
   const bankingAuthTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
