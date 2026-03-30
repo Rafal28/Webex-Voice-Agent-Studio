@@ -824,11 +824,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     try {
       const twilioClient = (await import("twilio")).default(sid, auth);
-      await twilioClient.messages.create({ body: `Your Webex Banking verification code is: ${code}`, from, to: found.phone });
+      const msg = await twilioClient.messages.create({ body: `Your Webex Banking verification code is: ${code}`, from, to: found.phone });
+      console.log(`[Banking] SMS sent to ${found.phone} — SID: ${msg.sid} Status: ${msg.status}`);
       const last2 = found.maskedPhone.slice(-2);
       return res.json({ token, maskedPhone: found.maskedPhone, response: `I found your account. I've just sent a 6-digit verification code to the phone number on file ending in ${last2}. Please say the code out loud when you're ready.` });
     } catch (err: any) {
-      console.error("[Banking] Twilio send error:", err.message);
+      console.error("[Banking] Twilio send error:", err.status, err.code, err.message);
       return res.json({ token, maskedPhone: found.maskedPhone, devCode: code, response: `I found your account but had trouble sending the SMS. Your code is ${code} — please say it out loud.` });
     }
   });
