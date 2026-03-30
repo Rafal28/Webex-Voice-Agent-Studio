@@ -774,14 +774,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function",
       function: {
         name: "lookup_customer",
-        description: "Look up a customer by their full name and date of birth. Returns whether they were found and their masked phone number. Call this after the user provides their name and DOB.",
+        description: "Look up a customer by their full name and last 4 digits of their card. Returns whether they were found and their masked phone number. Call this after the user provides their name and last 4 card digits.",
         parameters: {
           type: "object",
           properties: {
-            name: { type: "string", description: "Customer full name" },
-            dob:  { type: "string", description: "Date of birth in YYYY-MM-DD format" },
+            name:  { type: "string", description: "Customer full name" },
+            last4: { type: "string", description: "Last 4 digits of the customer's card" },
           },
-          required: ["name", "dob"],
+          required: ["name", "last4"],
         },
       },
     },
@@ -789,14 +789,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function",
       function: {
         name: "send_verification_code",
-        description: "Send a 6-digit SMS verification code to the phone number on file for the customer. Call this after successfully looking up the customer and they agree to receive a code.",
+        description: "Send a 6-digit SMS verification code to the phone number on file for the customer. Call this immediately after successfully looking up the customer.",
         parameters: {
           type: "object",
           properties: {
-            name: { type: "string", description: "Customer full name" },
-            dob:  { type: "string", description: "Date of birth in YYYY-MM-DD format" },
+            name:  { type: "string", description: "Customer full name" },
+            last4: { type: "string", description: "Last 4 digits of the customer's card" },
           },
-          required: ["name", "dob"],
+          required: ["name", "last4"],
         },
       },
     },
@@ -924,26 +924,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return { success: false, error: `Unknown function: ${functionName}` };
   }
 
-  // In-memory OTP token store for the tool flow (shared reference)
-  const pendingOtpTokens = new Map<string, string>(); // sessionKey → otpToken
+  // Parse CSV knowledge base content to find a customer by name + last 4 card digits
+  async function lookupCustomerFromKB(
+    agentId: number | undefined,
+    name: string,
+    last4: string
+  ): Promise<{ phone: string; maskedPhone: string } | null> {
+    // First try knowledge base if agentId provided
+    if (agentId) {
+      const kbItems = await storage.getKnowledgeBaseItemsByAgent(agentId);
+      for (const item of kbItems) {
+        if (!item.content) continue;
+        const lines = item.content.split('\n').map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+          // Skip header rows
+          if (/name.*card|card.*name/i.test(line)) continue;
+          const parts = line.split(',').map(p => p.trim());
+          if (parts.length < 3) continue;
+          const csvName  = parts[0];
+          const csvLast4 = parts[1].replace(/\D/g, '');
+          const csvPhone = parts[2].replace(/\D/g, '');
+          if (
+            csvName.toLowerCase() === name.trim().toLowerCase() &&
+            csvLast4 === last4.replace(/\D/g, '')
+          ) {
+            const e164 = csvPhone.startsWith('1') ? `+${csvPhone}` : `+1${csvPhone}`;
+            return { phone: e164, maskedPhone: maskPhone(e164) };
+          }
+        }
+      }
+    }
+    // Fallback: hardcoded DB
+    const customer = CUSTOMER_DB.find(
+      c => c.name.toLowerCase() === name.trim().toLowerCase() &&
+           last4.replace(/\D/g,'') === c.phone.slice(-4)
+    );
+    if (!customer) return null;
+    return { phone: customer.phone, maskedPhone: maskPhone(customer.phone) };
+  }
 
   async function executeBankingFunction(
     functionName: string,
-    args: Record<string, any>
+    args: Record<string, any>,
+    agentId?: number
   ): Promise<{ success: boolean; result?: string; error?: string; token?: string; verified?: boolean }> {
     if (functionName === "lookup_customer") {
-      const customer = lookupCustomer(args.name, args.dob);
-      if (!customer) return { success: false, error: "No customer found matching that name and date of birth." };
-      return { success: true, result: `Customer found. Phone on file: ${maskPhone(customer.phone)}` };
+      const found = await lookupCustomerFromKB(agentId, args.name, args.last4);
+      if (!found) return { success: false, error: "No customer found matching that name and card number." };
+      return { success: true, result: `Customer found. Phone on file: ${found.maskedPhone}` };
     }
 
     if (functionName === "send_verification_code") {
-      const customer = lookupCustomer(args.name, args.dob);
-      if (!customer) return { success: false, error: "Customer not found." };
+      const found = await lookupCustomerFromKB(agentId, args.name, args.last4);
+      if (!found) return { success: false, error: "Customer not found." };
 
       const code = String(Math.floor(100000 + Math.random() * 900000));
       const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      otpStore.set(token, { code, expiresAt: Date.now() + 10 * 60 * 1000, phone: customer.phone });
+      otpStore.set(token, { code, expiresAt: Date.now() + 10 * 60 * 1000, phone: found.phone });
 
       const sid  = process.env.TWILIO_ACCOUNT_SID;
       const auth = process.env.TWILIO_AUTH_TOKEN;
@@ -956,7 +993,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await client.messages.create({
             body: `Your Cisco Bank verification code is: ${code}. Valid for 10 minutes.`,
             from,
-            to: customer.phone,
+            to: found.phone,
           });
         } catch (err: any) {
           return { success: false, error: "Failed to send SMS: " + err.message };
@@ -964,7 +1001,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         console.warn("Twilio not configured — OTP code (dev only):", code);
       }
-      return { success: true, result: `Verification code sent to ${maskPhone(customer.phone)}.`, token };
+      return { success: true, result: `Verification code sent to ${found.maskedPhone}.`, token };
     }
 
     if (functionName === "verify_code") {
@@ -1077,7 +1114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         let functionResult: Record<string, any>;
         if (bankingFunctionNames.includes(functionName)) {
-          functionResult = await executeBankingFunction(functionName, functionArgs);
+          functionResult = await executeBankingFunction(functionName, functionArgs, data.agentId);
         } else {
           functionResult = await executeWebexFunction(functionName, functionArgs);
         }
