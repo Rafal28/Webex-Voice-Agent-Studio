@@ -28,7 +28,6 @@ if (process.env.NODE_ENV === "production") {
         <body style="font-family:sans-serif;text-align:center;padding:80px">
           <h1>410 – Gone</h1>
           <p>This URL is no longer active.</p>
-          <p>Please visit <a href="https://${CANONICAL_DOMAIN}">https://${CANONICAL_DOMAIN}</a></p>
         </body></html>
       `);
     }
