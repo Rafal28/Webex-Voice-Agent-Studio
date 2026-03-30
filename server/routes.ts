@@ -930,9 +930,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     name: string,
     last4: string
   ): Promise<{ phone: string; maskedPhone: string } | null> {
+    console.log(`[Banking] lookup: agentId=${agentId}, name="${name}", last4="${last4}"`);
     // First try knowledge base if agentId provided
     if (agentId) {
       const kbItems = await storage.getKnowledgeBaseItemsByAgent(agentId);
+      console.log(`[Banking] KB items for agent ${agentId}:`, kbItems.length);
       for (const item of kbItems) {
         if (!item.content) continue;
         const lines = item.content.split('\n').map(l => l.trim()).filter(Boolean);
@@ -944,22 +946,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const csvName  = parts[0];
           const csvLast4 = parts[1].replace(/\D/g, '');
           const csvPhone = parts[2].replace(/\D/g, '');
+          console.log(`[Banking] Checking CSV row: name="${csvName}" last4="${csvLast4}" phone="${csvPhone}"`);
           if (
             csvName.toLowerCase() === name.trim().toLowerCase() &&
             csvLast4 === last4.replace(/\D/g, '')
           ) {
             const e164 = csvPhone.startsWith('1') ? `+${csvPhone}` : `+1${csvPhone}`;
+            console.log(`[Banking] Match found! Phone: ${e164}`);
             return { phone: e164, maskedPhone: maskPhone(e164) };
           }
         }
       }
+      console.log(`[Banking] No KB match found, trying hardcoded DB`);
     }
     // Fallback: hardcoded DB
     const customer = CUSTOMER_DB.find(
       c => c.name.toLowerCase() === name.trim().toLowerCase() &&
            last4.replace(/\D/g,'') === c.phone.slice(-4)
     );
-    if (!customer) return null;
+    if (!customer) {
+      console.log(`[Banking] No match in hardcoded DB either`);
+      return null;
+    }
+    console.log(`[Banking] Hardcoded DB match: ${customer.phone}`);
     return { phone: customer.phone, maskedPhone: maskPhone(customer.phone) };
   }
 
