@@ -685,6 +685,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ─── Customer Database (mock) ─────────────────────────────────────────────
   const CUSTOMER_DB = [
+    { name: "Mayada Zakaria", dob: "1985-03-15", phone: "+19195978220", accountBalance: 3750.00 },
     { name: "John Smith",    dob: "1985-03-15", phone: "+15551234567", accountBalance: 2450.00 },
     { name: "Jane Doe",      dob: "1990-07-22", phone: "+15559876543", accountBalance: 5820.50 },
     { name: "Carlos Rivera", dob: "1978-11-08", phone: "+15552223333", accountBalance: 1100.75 },
