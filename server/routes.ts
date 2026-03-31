@@ -703,12 +703,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ─── Customer Database (mock) ─────────────────────────────────────────────
   const CUSTOMER_DB = [
-    { name: "Mayada Zakaria", dob: "1985-03-15", phone: "+19195978220", accountBalance: 3750.00 },
-    { name: "John Smith",    dob: "1985-03-15", phone: "+15551234567", accountBalance: 2450.00 },
-    { name: "Jane Doe",      dob: "1990-07-22", phone: "+15559876543", accountBalance: 5820.50 },
-    { name: "Carlos Rivera", dob: "1978-11-08", phone: "+15552223333", accountBalance: 1100.75 },
-    { name: "Emily Chen",    dob: "1995-01-30", phone: "+15554445555", accountBalance: 8300.00 },
-    { name: "Demo User",     dob: "2000-01-01", phone: process.env.DEMO_CUSTOMER_PHONE || "+15550001111", accountBalance: 1000.00 },
+    { name: "Mayada Zakaria", dob: "1985-03-15", phone: "+19195978220", accountBalance: 3750.00, otp: "123456" },
+    { name: "John Smith",    dob: "1985-03-15", phone: "+15551234567", accountBalance: 2450.00, otp: "234567" },
+    { name: "Jane Doe",      dob: "1990-07-22", phone: "+15559876543", accountBalance: 5820.50, otp: "345678" },
+    { name: "Carlos Rivera", dob: "1978-11-08", phone: "+15552223333", accountBalance: 1100.75, otp: "456789" },
+    { name: "Emily Chen",    dob: "1995-01-30", phone: "+15554445555", accountBalance: 8300.00, otp: "567890" },
+    { name: "Demo User",     dob: "2000-01-01", phone: process.env.DEMO_CUSTOMER_PHONE || "+15550001111", accountBalance: 1000.00, otp: "111111" },
   ];
 
   // In-memory OTP store: token → { code, expiresAt, phone }
@@ -827,29 +827,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({ token: null, response: `I couldn't find an account matching that name and card number. Please double-check and try again.` });
     }
 
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    // Use OTP from user profile (no Twilio SMS sent)
+    const code = found.otp || String(Math.floor(100000 + Math.random() * 900000));
     const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     otpStore.set(token, { code, expiresAt: Date.now() + 10 * 60 * 1000, phone: found.phone });
+    console.log(`[Banking] Profile OTP stored for verification (no SMS sent)`);
 
-    const sid  = process.env.TWILIO_ACCOUNT_SID;
-    const auth = process.env.TWILIO_AUTH_TOKEN;
-    const from = process.env.TWILIO_PHONE_NUMBER;
-
-    if (!sid || !auth || !from) {
-      console.warn("[Banking] Twilio not configured — OTP (dev):", code);
-      return res.json({ token, maskedPhone: found.maskedPhone, devCode: code, response: `I found your account. For development, your code is ${code}. Please say the 6-digit code to continue.` });
-    }
-
-    try {
-      const twilioClient = (await import("twilio")).default(sid, auth);
-      const msg = await twilioClient.messages.create({ body: `Your Webex Banking verification code is: ${code}`, from, to: found.phone });
-      console.log(`[Banking] SMS sent to ${found.phone} — SID: ${msg.sid} Status: ${msg.status}`);
-      const last2 = found.maskedPhone.slice(-2);
-      return res.json({ token, maskedPhone: found.maskedPhone, response: `I found your account. I've just sent a 6-digit verification code to the phone number on file ending in ${last2}. Please say the code out loud when you're ready.` });
-    } catch (err: any) {
-      console.error("[Banking] Twilio send error:", err.status, err.code, err.message);
-      return res.json({ token, maskedPhone: found.maskedPhone, devCode: code, response: `I found your account but had trouble sending the SMS. Your code is ${code} — please say it out loud.` });
-    }
+    return res.json({
+      token,
+      maskedPhone: found.maskedPhone,
+      response: `Thank you. I've verified your account details. I'm sending you a one-time password now — please provide the verification code when you're ready.`
+    });
   });
 
   // Extract 6-digit OTP code from free-form avatar speech
@@ -861,7 +849,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let code: string | null = null;
 
     const cleaned = message.replace(/\s+/g, "");
-    const directMatch = cleaned.match(/\d{6}/);
+    const directMatch = cleaned.match(/\d{4,8}/);
     if (directMatch) {
       code = directMatch[0];
     } else if (openai) {
@@ -869,7 +857,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const extraction = await openai.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [
-            { role: "system", content: `Extract a 6-digit numeric code from this spoken message. The digits may be spoken individually like "one two three four five six". Return JSON: {"code": "123456"} or {"code": null}.` },
+            { role: "system", content: `Extract a numeric verification code (4 to 8 digits) from this spoken message. The digits may be spoken individually like "two four seven eight nine one". Return JSON: {"code": "247891"} or {"code": null}.` },
             { role: "user", content: message }
           ],
           max_tokens: 40,
@@ -1047,7 +1035,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     agentId: number | undefined,
     name: string,
     last4: string
-  ): Promise<{ phone: string; maskedPhone: string } | null> {
+  ): Promise<{ phone: string; maskedPhone: string; otp?: string } | null> {
     console.log(`[Banking] lookup: agentId=${agentId}, name="${name}", last4="${last4}"`);
     // First try knowledge base if agentId provided
     if (agentId) {
@@ -1064,14 +1052,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const csvName  = parts[0];
           const csvLast4 = parts[1].replace(/\D/g, '');
           const csvPhone = parts[2].replace(/\D/g, '');
-          console.log(`[Banking] Checking CSV row: name="${csvName}" last4="${csvLast4}" phone="${csvPhone}"`);
+          const csvOtp   = parts[3] ? parts[3].replace(/\D/g, '') : undefined;
+          console.log(`[Banking] Checking CSV row: name="${csvName}" last4="${csvLast4}" phone="${csvPhone}" otp="${csvOtp ?? 'none'}"`);
           if (
             csvName.toLowerCase() === name.trim().toLowerCase() &&
             csvLast4 === last4.replace(/\D/g, '')
           ) {
             const e164 = csvPhone.startsWith('1') ? `+${csvPhone}` : `+1${csvPhone}`;
-            console.log(`[Banking] Match found! Phone: ${e164}`);
-            return { phone: e164, maskedPhone: maskPhone(e164) };
+            console.log(`[Banking] Match found! Phone: ${e164}, OTP in profile: ${csvOtp ?? 'none'}`);
+            return { phone: e164, maskedPhone: maskPhone(e164), otp: csvOtp };
           }
         }
       }
@@ -1087,7 +1076,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return null;
     }
     console.log(`[Banking] Hardcoded DB match: ${customer.phone}`);
-    return { phone: customer.phone, maskedPhone: maskPhone(customer.phone) };
+    return { phone: customer.phone, maskedPhone: maskPhone(customer.phone), otp: customer.otp };
   }
 
   async function executeBankingFunction(
@@ -1105,30 +1094,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const found = await lookupCustomerFromKB(agentId, args.name, args.last4);
       if (!found) return { success: false, error: "Customer not found." };
 
-      const code = String(Math.floor(100000 + Math.random() * 900000));
+      // Use OTP from user profile — no SMS sent
+      const code = found.otp || String(Math.floor(100000 + Math.random() * 900000));
       const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       otpStore.set(token, { code, expiresAt: Date.now() + 10 * 60 * 1000, phone: found.phone });
+      console.log(`[Banking] Profile OTP stored for chat-flow verification (no SMS sent)`);
 
-      const sid  = process.env.TWILIO_ACCOUNT_SID;
-      const auth = process.env.TWILIO_AUTH_TOKEN;
-      const from = process.env.TWILIO_PHONE_NUMBER;
-
-      if (sid && auth && from) {
-        try {
-          const twilio = (await import("twilio")).default;
-          const client = twilio(sid, auth);
-          await client.messages.create({
-            body: `Your Cisco Bank verification code is: ${code}. Valid for 10 minutes.`,
-            from,
-            to: found.phone,
-          });
-        } catch (err: any) {
-          return { success: false, error: "Failed to send SMS: " + err.message };
-        }
-      } else {
-        console.warn("Twilio not configured — OTP code (dev only):", code);
-      }
-      return { success: true, result: `Verification code sent to ${found.maskedPhone}.`, token };
+      return { success: true, result: `Verification code issued. Please ask the customer to provide their one-time password.`, token };
     }
 
     if (functionName === "verify_code") {
