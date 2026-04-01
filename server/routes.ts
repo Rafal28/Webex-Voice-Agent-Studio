@@ -1030,6 +1030,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return { success: false, error: `Unknown function: ${functionName}` };
   }
 
+  // Levenshtein distance for fuzzy name matching
+  function levenshtein(a: string, b: string): number {
+    const m = a.length, n = b.length;
+    const dp: number[][] = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+    return dp[m][n];
+  }
+
+  function namesMatch(csvName: string, inputName: string): boolean {
+    const csv   = csvName.trim().toLowerCase();
+    const input = inputName.trim().toLowerCase();
+    if (csv === input) return true;
+
+    const csvParts   = csv.split(/\s+/);
+    const inputParts = input.split(/\s+/);
+
+    // Last name must match exactly
+    const csvLast   = csvParts[csvParts.length - 1];
+    const inputLast = inputParts[inputParts.length - 1];
+    if (csvLast !== inputLast) return false;
+
+    // First name: allow up to 2 character edits (handles "Mayada"→"Mayata", "Mayeda")
+    const csvFirst   = csvParts[0];
+    const inputFirst = inputParts[0];
+    return levenshtein(csvFirst, inputFirst) <= 2;
+  }
+
   // Parse CSV knowledge base content to find a customer by name + last 4 card digits
   async function lookupCustomerFromKB(
     agentId: number | undefined,
@@ -1055,7 +1089,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const csvOtp   = parts[3] ? parts[3].replace(/\D/g, '') : undefined;
           console.log(`[Banking] Checking CSV row: name="${csvName}" last4="${csvLast4}" phone="${csvPhone}" otp="${csvOtp ?? 'none'}"`);
           if (
-            csvName.toLowerCase() === name.trim().toLowerCase() &&
+            namesMatch(csvName, name) &&
             csvLast4 === last4.replace(/\D/g, '')
           ) {
             const e164 = csvPhone.startsWith('1') ? `+${csvPhone}` : `+1${csvPhone}`;
@@ -1068,7 +1102,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     // Fallback: hardcoded DB
     const customer = CUSTOMER_DB.find(
-      c => c.name.toLowerCase() === name.trim().toLowerCase() &&
+      c => namesMatch(c.name, name) &&
            last4.replace(/\D/g,'') === c.phone.slice(-4)
     );
     if (!customer) {
