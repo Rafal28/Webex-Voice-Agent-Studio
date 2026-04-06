@@ -453,6 +453,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Ghostwriter: generate agent name + system prompt from a natural language description
+  app.post("/api/agents/generate-prompt", async (req, res) => {
+    try {
+      const openai = getOpenAIClient();
+      if (!openai) return res.status(503).json({ error: "OpenAI not configured" });
+
+      const { description } = req.body;
+      if (!description?.trim()) return res.status(400).json({ error: "Description required" });
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert AI voice agent designer. Given a user's description of what they want their agent to do, generate:
+1. A short, memorable agent name (2-3 words, title case, no "AI" or "Bot" suffix)
+2. A complete, production-ready system prompt
+
+The system prompt must follow this exact structure:
+# Personality
+[Who the agent is, their core character traits, and their purpose]
+
+# Capabilities
+[Bullet list of what the agent can specifically do]
+
+# Communication Style
+[How the agent speaks — tone, pacing, formality, style notes for voice delivery]
+
+Keep the system prompt under 400 words. Make it warm, professional, and specific to the description given.
+Return valid JSON: {"agentName": "...", "systemPrompt": "..."}`
+          },
+          { role: "user", content: description.trim() }
+        ],
+        response_format: { type: "json_object" },
+        max_tokens: 900
+      });
+
+      const raw = completion.choices[0].message.content || "{}";
+      const result = JSON.parse(raw);
+      if (!result.agentName || !result.systemPrompt) {
+        return res.status(500).json({ error: "Generation failed — unexpected format" });
+      }
+      res.json({ agentName: result.agentName, systemPrompt: result.systemPrompt });
+    } catch (err: any) {
+      console.error("[Ghostwriter] Error:", err.message);
+      res.status(500).json({ error: err.message || "Generation failed" });
+    }
+  });
+
   app.post("/api/tts", async (req, res) => {
     try {
       const openai = getOpenAIClient();

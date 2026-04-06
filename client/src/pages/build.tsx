@@ -588,6 +588,10 @@ export default function Build() {
   const [newMcpEndpoint, setNewMcpEndpoint] = useState("");
   const [newMcpDescription, setNewMcpDescription] = useState("");
 
+  const [ghostwriterDesc, setGhostwriterDesc] = useState("");
+  const [ghostwriterGenerating, setGhostwriterGenerating] = useState(false);
+  const [ghostwriterResult, setGhostwriterResult] = useState<{ agentName: string; systemPrompt: string } | null>(null);
+
   const [showAddUrl, setShowAddUrl] = useState(false);
   const [showAddText, setShowAddText] = useState(false);
   const [newKbUrl, setNewKbUrl] = useState("");
@@ -787,6 +791,35 @@ export default function Build() {
     }
   };
 
+  const handleGhostwriter = async () => {
+    if (!ghostwriterDesc.trim() || ghostwriterGenerating) return;
+    setGhostwriterGenerating(true);
+    setGhostwriterResult(null);
+    try {
+      const res = await fetch("/api/agents/generate-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: ghostwriterDesc.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Generation failed");
+      setGhostwriterResult(data);
+    } catch (err: any) {
+      toast({ title: "Generation failed", description: err.message, variant: "destructive" });
+    } finally {
+      setGhostwriterGenerating(false);
+    }
+  };
+
+  const applyGhostwriterResult = () => {
+    if (!ghostwriterResult) return;
+    setAgentName(ghostwriterResult.agentName);
+    setSystemPrompt(ghostwriterResult.systemPrompt);
+    setSelectedTemplate(null);
+    setBuildMode('scratch');
+    toast({ title: "Agent prompt applied", description: "Review and customise below." });
+  };
+
   const handleCopyCode = async (code: string, id: string) => {
     await navigator.clipboard.writeText(code);
     setCopiedCode(id);
@@ -866,7 +899,100 @@ export default function Build() {
             >
               <div className="text-center mb-8">
                 <h2 className="text-3xl font-display font-bold mb-3">How would you like to start?</h2>
-                <p className="text-muted-foreground">Choose a turnkey template or build from scratch</p>
+                <p className="text-muted-foreground">Describe your agent, pick a template, or build from scratch</p>
+              </div>
+
+              {/* Ghostwriter card */}
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4 }}
+                className="mb-8"
+              >
+                <div className="relative rounded-2xl border border-violet-500/30 bg-gradient-to-br from-violet-600/10 via-purple-600/8 to-blue-600/10 p-6 overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-br from-violet-500/5 to-transparent pointer-events-none" />
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-full bg-violet-500/20 flex items-center justify-center">
+                      <Sparkles className="w-5 h-5 text-violet-400" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-base">Describe your agent</h3>
+                      <p className="text-xs text-muted-foreground">AI writes the full system prompt for you</p>
+                    </div>
+                    <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 uppercase tracking-wider">Ghostwriter</span>
+                  </div>
+
+                  <Textarea
+                    value={ghostwriterDesc}
+                    onChange={e => setGhostwriterDesc(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleGhostwriter(); }}
+                    placeholder="e.g. A friendly banking assistant that helps customers check their balance, dispute charges, and get account help — always calm and reassuring."
+                    className="min-h-[90px] bg-background/60 border-white/10 resize-none text-sm placeholder:text-muted-foreground/50 mb-3"
+                    data-testid="input-ghostwriter-description"
+                    disabled={ghostwriterGenerating}
+                  />
+
+                  <div className="flex items-center gap-3">
+                    <Button
+                      onClick={handleGhostwriter}
+                      disabled={!ghostwriterDesc.trim() || ghostwriterGenerating}
+                      className="bg-violet-600 hover:bg-violet-500 text-white"
+                      data-testid="button-ghostwriter-generate"
+                    >
+                      {ghostwriterGenerating
+                        ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Writing agent…</>
+                        : <><Sparkles className="w-4 h-4 mr-2" /> Generate Agent</>
+                      }
+                    </Button>
+                    {ghostwriterDesc.trim() && !ghostwriterGenerating && (
+                      <span className="text-xs text-muted-foreground">or ⌘↵</span>
+                    )}
+                  </div>
+
+                  {/* Generated result preview */}
+                  {ghostwriterResult && !ghostwriterGenerating && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mt-5 p-4 rounded-xl bg-background/70 border border-violet-500/20 space-y-3"
+                      data-testid="ghostwriter-result"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Check className="w-4 h-4 text-green-400 shrink-0" />
+                        <span className="text-sm font-medium">Agent generated</span>
+                        <span className="ml-auto text-xs text-muted-foreground italic">"{ghostwriterResult.agentName}"</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground line-clamp-4 leading-relaxed font-mono whitespace-pre-wrap">
+                        {ghostwriterResult.systemPrompt}
+                      </p>
+                      <div className="flex gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          onClick={applyGhostwriterResult}
+                          className="bg-violet-600 hover:bg-violet-500 text-white"
+                          data-testid="button-ghostwriter-apply"
+                        >
+                          <Check className="w-3 h-3 mr-1.5" /> Use this agent
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={handleGhostwriter}
+                          className="text-muted-foreground"
+                          data-testid="button-ghostwriter-regenerate"
+                        >
+                          <RefreshCw className="w-3 h-3 mr-1.5" /> Regenerate
+                        </Button>
+                      </div>
+                    </motion.div>
+                  )}
+                </div>
+              </motion.div>
+
+              <div className="flex items-center gap-4 mb-6">
+                <div className="h-px flex-1 bg-white/10" />
+                <span className="text-xs text-muted-foreground uppercase tracking-wider">or pick a template</span>
+                <div className="h-px flex-1 bg-white/10" />
               </div>
 
               <div className="grid md:grid-cols-2 gap-6 mb-8">
