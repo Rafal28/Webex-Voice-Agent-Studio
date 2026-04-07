@@ -811,13 +811,27 @@ export default function Build() {
     }
   };
 
-  const applyGhostwriterResult = () => {
-    if (!ghostwriterResult) return;
-    setAgentName(ghostwriterResult.agentName);
-    setSystemPrompt(ghostwriterResult.systemPrompt);
-    setSelectedTemplate(null);
-    setBuildMode('scratch');
-    toast({ title: "Agent prompt applied", description: "Review and customise below." });
+  const [ghostwriterCreating, setGhostwriterCreating] = useState(false);
+
+  const applyGhostwriterResult = async () => {
+    if (!ghostwriterResult || ghostwriterCreating) return;
+    setGhostwriterCreating(true);
+    try {
+      const agent = await agentsApi.create({
+        name: ghostwriterResult.agentName,
+        systemPrompt: ghostwriterResult.systemPrompt,
+        llmModel: "gpt-4",
+        voiceModel: "fable",
+        language: "en-US",
+        gender: "neutral",
+      });
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      toast({ title: "Agent created!", description: `${agent.name} is ready to chat.` });
+      setLocation(`/evaluate?agentId=${agent.id}`);
+    } catch (err: any) {
+      toast({ title: "Creation failed", description: err.message, variant: "destructive" });
+      setGhostwriterCreating(false);
+    }
   };
 
   const handleCopyCode = async (code: string, id: string) => {
@@ -969,15 +983,20 @@ export default function Build() {
                         <Button
                           size="sm"
                           onClick={applyGhostwriterResult}
+                          disabled={ghostwriterCreating}
                           className="bg-violet-600 hover:bg-violet-500 text-white"
                           data-testid="button-ghostwriter-apply"
                         >
-                          <Check className="w-3 h-3 mr-1.5" /> Use this agent
+                          {ghostwriterCreating
+                            ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Creating…</>
+                            : <><Sparkles className="w-3 h-3 mr-1.5" /> Create Agent</>
+                          }
                         </Button>
                         <Button
                           size="sm"
                           variant="ghost"
                           onClick={handleGhostwriter}
+                          disabled={ghostwriterCreating}
                           className="text-muted-foreground"
                           data-testid="button-ghostwriter-regenerate"
                         >
