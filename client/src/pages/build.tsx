@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2, Search, Mail, Calendar, FileText, Users, CreditCard, Phone, Workflow, Database, Cloud, Shield, Zap, Github, ExternalLink, X, Server, Pencil, Save } from "lucide-react";
@@ -591,6 +591,13 @@ export default function Build() {
   const [ghostwriterDesc, setGhostwriterDesc] = useState("");
   const [ghostwriterGenerating, setGhostwriterGenerating] = useState(false);
   const [ghostwriterResult, setGhostwriterResult] = useState<{ agentName: string; systemPrompt: string } | null>(null);
+  const [isSparkRecording, setIsSparkRecording] = useState(false);
+  const [isSparkConnecting, setIsSparkConnecting] = useState(false);
+  const sparkSocketRef = useRef<WebSocket | null>(null);
+  const sparkAudioCtxRef = useRef<AudioContext | null>(null);
+  const sparkProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const sparkStreamRef = useRef<MediaStream | null>(null);
+  const sparkTranscriptRef = useRef<string>("");
 
   const [showAddUrl, setShowAddUrl] = useState(false);
   const [showAddText, setShowAddText] = useState(false);
@@ -811,6 +818,98 @@ export default function Build() {
     }
   };
 
+  const floatTo16BitPCM = useCallback((input: Float32Array): ArrayBuffer => {
+    const buffer = new ArrayBuffer(input.length * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < input.length; i++) {
+      const s = Math.max(-1, Math.min(1, input[i]));
+      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return buffer;
+  }, []);
+
+  const startSparkRecording = useCallback(async () => {
+    if (isSparkRecording || isSparkConnecting) return;
+    setIsSparkConnecting(true);
+    sparkTranscriptRef.current = "";
+
+    try {
+      const keyRes = await fetch("/api/deepgram/key");
+      if (!keyRes.ok) throw new Error("Failed to get speech key");
+      const { key } = await keyRes.json();
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      sparkStreamRef.current = stream;
+
+      const audioCtx = new AudioContext({ sampleRate: 16000 });
+      sparkAudioCtxRef.current = audioCtx;
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      sparkProcessorRef.current = processor;
+
+      const socket = new WebSocket(
+        `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&encoding=linear16&sample_rate=16000`,
+        ["token", key]
+      );
+
+      socket.onopen = () => {
+        setIsSparkConnecting(false);
+        setIsSparkRecording(true);
+        processor.onaudioprocess = (e) => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(floatTo16BitPCM(e.inputBuffer.getChannelData(0)));
+          }
+        };
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.channel?.alternatives?.[0]?.transcript) {
+            const transcript = data.channel.alternatives[0].transcript;
+            if (data.is_final && transcript) {
+              sparkTranscriptRef.current += transcript + " ";
+              setGhostwriterDesc(sparkTranscriptRef.current);
+            } else if (transcript) {
+              setGhostwriterDesc(sparkTranscriptRef.current + transcript);
+            }
+          }
+        } catch {}
+      };
+
+      socket.onerror = () => {
+        toast({ title: "Speech error", description: "Failed to connect to speech recognition.", variant: "destructive" });
+        setIsSparkRecording(false);
+        setIsSparkConnecting(false);
+        stream.getTracks().forEach(t => t.stop());
+        if (audioCtx.state !== "closed") audioCtx.close();
+      };
+
+      socket.onclose = () => {
+        setIsSparkRecording(false);
+        setIsSparkConnecting(false);
+        if (sparkProcessorRef.current) { sparkProcessorRef.current.disconnect(); sparkProcessorRef.current = null; }
+        if (sparkStreamRef.current) { sparkStreamRef.current.getTracks().forEach(t => t.stop()); sparkStreamRef.current = null; }
+        if (sparkAudioCtxRef.current?.state !== "closed") { sparkAudioCtxRef.current?.close(); sparkAudioCtxRef.current = null; }
+      };
+
+      sparkSocketRef.current = socket;
+    } catch (err: any) {
+      setIsSparkConnecting(false);
+      setIsSparkRecording(false);
+      toast({ title: "Microphone access denied", description: err.message || "Please allow microphone access.", variant: "destructive" });
+    }
+  }, [isSparkRecording, isSparkConnecting, floatTo16BitPCM, toast]);
+
+  const stopSparkRecording = useCallback(() => {
+    if (sparkProcessorRef.current) sparkProcessorRef.current.disconnect();
+    if (sparkSocketRef.current?.readyState === WebSocket.OPEN) sparkSocketRef.current.close();
+  }, []);
+
   const [ghostwriterCreating, setGhostwriterCreating] = useState(false);
 
   const applyGhostwriterResult = async () => {
@@ -948,20 +1047,43 @@ export default function Build() {
                     <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 uppercase tracking-wider">Spark Builder</span>
                   </div>
 
-                  <Textarea
-                    value={ghostwriterDesc}
-                    onChange={e => setGhostwriterDesc(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleGhostwriter(); }}
-                    placeholder="e.g. A friendly banking assistant that helps customers check their balance, dispute charges, and get account help — always calm and reassuring."
-                    className="min-h-[90px] bg-background/60 border-white/10 resize-none text-sm placeholder:text-muted-foreground/50 mb-3"
-                    data-testid="input-ghostwriter-description"
-                    disabled={ghostwriterGenerating}
-                  />
+                  <div className="relative mb-3">
+                    <Textarea
+                      value={ghostwriterDesc}
+                      onChange={e => setGhostwriterDesc(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleGhostwriter(); }}
+                      placeholder={isSparkRecording ? "Listening… speak your agent description" : "e.g. A friendly banking assistant that helps customers check their balance, dispute charges, and get account help — always calm and reassuring."}
+                      className={`min-h-[90px] bg-background/60 border-white/10 resize-none text-sm placeholder:text-muted-foreground/50 pr-12 ${isSparkRecording ? "border-red-400/50 ring-1 ring-red-400/30" : ""}`}
+                      data-testid="input-ghostwriter-description"
+                      disabled={ghostwriterGenerating}
+                    />
+                    <button
+                      type="button"
+                      onClick={isSparkRecording ? stopSparkRecording : startSparkRecording}
+                      disabled={ghostwriterGenerating || isSparkConnecting}
+                      title={isSparkRecording ? "Stop recording" : "Describe by voice"}
+                      data-testid="button-spark-mic"
+                      className={`absolute right-2 bottom-2 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                        isSparkRecording
+                          ? "bg-red-500 hover:bg-red-400 text-white animate-pulse"
+                          : isSparkConnecting
+                          ? "bg-violet-500/30 text-violet-300 cursor-wait"
+                          : "bg-violet-500/20 hover:bg-violet-500/40 text-violet-300 hover:text-violet-200"
+                      }`}
+                    >
+                      {isSparkConnecting
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : isSparkRecording
+                        ? <Square className="w-3.5 h-3.5" />
+                        : <Mic className="w-4 h-4" />
+                      }
+                    </button>
+                  </div>
 
                   <div className="flex items-center gap-3">
                     <Button
                       onClick={handleGhostwriter}
-                      disabled={!ghostwriterDesc.trim() || ghostwriterGenerating}
+                      disabled={!ghostwriterDesc.trim() || ghostwriterGenerating || isSparkRecording}
                       className="bg-violet-600 hover:bg-violet-500 text-white"
                       data-testid="button-ghostwriter-generate"
                     >
@@ -970,8 +1092,14 @@ export default function Build() {
                         : <><Sparkles className="w-4 h-4 mr-2" /> Generate Agent</>
                       }
                     </Button>
-                    {ghostwriterDesc.trim() && !ghostwriterGenerating && (
+                    {ghostwriterDesc.trim() && !ghostwriterGenerating && !isSparkRecording && (
                       <span className="text-xs text-muted-foreground">or ⌘↵</span>
+                    )}
+                    {isSparkRecording && (
+                      <span className="text-xs text-red-400 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse inline-block" />
+                        Recording — click the mic to stop
+                      </span>
                     )}
                   </div>
 
