@@ -902,7 +902,7 @@ export default function Build() {
                 <p className="text-muted-foreground">Describe your agent, pick a template, or build from scratch</p>
               </div>
 
-              {/* Ghostwriter card */}
+              {/* Spark Builder card */}
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -919,7 +919,7 @@ export default function Build() {
                       <h3 className="font-semibold text-base">Describe your agent</h3>
                       <p className="text-xs text-muted-foreground">AI writes the full system prompt for you</p>
                     </div>
-                    <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 uppercase tracking-wider">Ghostwriter</span>
+                    <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 uppercase tracking-wider">Spark Builder</span>
                   </div>
 
                   <Textarea
