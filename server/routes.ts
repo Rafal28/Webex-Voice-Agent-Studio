@@ -453,7 +453,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Ghostwriter: generate agent name + system prompt from a natural language description
+  // Spark Builder: generate agent name + system prompt + next-step suggestions
   app.post("/api/agents/generate-prompt", async (req, res) => {
     try {
       const openai = getOpenAIClient();
@@ -467,27 +467,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         messages: [
           {
             role: "system",
-            content: `You are an expert AI voice agent designer. Given a user's description of what they want their agent to do, generate:
+            content: `You are an expert AI voice agent designer. Given a user's description, generate:
 1. A short, memorable agent name (2-3 words, title case, no "AI" or "Bot" suffix)
-2. A complete, production-ready system prompt
+2. A complete, production-ready system prompt with three sections: # Personality, # Capabilities, # Communication Style
+3. Five concise, specific suggestions for further enhancements the user could add — phrase them as actionable requests the user could make, e.g. "Add a friendly greeting for first-time callers" or "Define escalation rules for unresolved complaints"
 
-The system prompt must follow this exact structure:
-# Personality
-[Who the agent is, their core character traits, and their purpose]
-
-# Capabilities
-[Bullet list of what the agent can specifically do]
-
-# Communication Style
-[How the agent speaks — tone, pacing, formality, style notes for voice delivery]
-
-Keep the system prompt under 400 words. Make it warm, professional, and specific to the description given.
-Return valid JSON: {"agentName": "...", "systemPrompt": "..."}`
+Keep the system prompt under 400 words.
+Return valid JSON: {"agentName":"...","systemPrompt":"...","suggestions":["...","...","...","...","..."]}`
           },
           { role: "user", content: description.trim() }
         ],
         response_format: { type: "json_object" },
-        max_tokens: 900
+        max_tokens: 1000
       });
 
       const raw = completion.choices[0].message.content || "{}";
@@ -495,10 +486,60 @@ Return valid JSON: {"agentName": "...", "systemPrompt": "..."}`
       if (!result.agentName || !result.systemPrompt) {
         return res.status(500).json({ error: "Generation failed — unexpected format" });
       }
-      res.json({ agentName: result.agentName, systemPrompt: result.systemPrompt });
+      res.json({
+        agentName: result.agentName,
+        systemPrompt: result.systemPrompt,
+        suggestions: Array.isArray(result.suggestions) ? result.suggestions.slice(0, 5) : []
+      });
     } catch (err: any) {
-      console.error("[Ghostwriter] Error:", err.message);
+      console.error("[SparkBuilder] generate-prompt error:", err.message);
       res.status(500).json({ error: err.message || "Generation failed" });
+    }
+  });
+
+  // Spark Builder: refine an existing system prompt based on a follow-up request
+  app.post("/api/agents/refine-prompt", async (req, res) => {
+    try {
+      const openai = getOpenAIClient();
+      if (!openai) return res.status(503).json({ error: "OpenAI not configured" });
+
+      const { systemPrompt, agentName, refinement } = req.body;
+      if (!systemPrompt?.trim() || !refinement?.trim()) {
+        return res.status(400).json({ error: "systemPrompt and refinement are required" });
+      }
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert AI voice agent designer. You have an existing agent system prompt and the user wants to refine or extend it.
+Apply the refinement thoughtfully. Then return:
+1. The updated system prompt (keep the # Personality, # Capabilities, # Communication Style structure)
+2. A short one-sentence summary of what you changed (e.g. "Added a friendly greeting for first-time callers")
+3. Four new suggestions for further enhancements, different from what was just done
+
+Return valid JSON: {"systemPrompt":"...","summary":"...","suggestions":["...","...","...","..."]}`
+          },
+          {
+            role: "user",
+            content: `Agent name: ${agentName || "the agent"}\n\nCurrent system prompt:\n${systemPrompt}\n\nRefinement requested: ${refinement}`
+          }
+        ],
+        response_format: { type: "json_object" },
+        max_tokens: 1000
+      });
+
+      const raw = completion.choices[0].message.content || "{}";
+      const result = JSON.parse(raw);
+      res.json({
+        systemPrompt: result.systemPrompt || systemPrompt,
+        summary: result.summary || "System prompt updated",
+        suggestions: Array.isArray(result.suggestions) ? result.suggestions.slice(0, 4) : []
+      });
+    } catch (err: any) {
+      console.error("[SparkBuilder] refine-prompt error:", err.message);
+      res.status(500).json({ error: err.message || "Refinement failed" });
     }
   });
 

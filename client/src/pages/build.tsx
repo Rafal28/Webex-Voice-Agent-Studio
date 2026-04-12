@@ -591,6 +591,19 @@ export default function Build() {
   const [ghostwriterDesc, setGhostwriterDesc] = useState("");
   const [ghostwriterGenerating, setGhostwriterGenerating] = useState(false);
   const [ghostwriterResult, setGhostwriterResult] = useState<{ agentName: string; systemPrompt: string } | null>(null);
+
+  type SparkLogEntry = { id: string; status: "done" | "loading"; message: string; icon: "check" | "sparkles" | "db" | "mic" | "wrench" };
+  const [sparkLog, setSparkLog] = useState<SparkLogEntry[]>([]);
+  const [sparkSuggestions, setSparkSuggestions] = useState<string[]>([]);
+  const [sparkPhase, setSparkPhase] = useState<"input" | "building" | "ready">("input");
+  const [sparkCustomInput, setSparkCustomInput] = useState("");
+  const [sparkRefining, setSparkRefining] = useState(false);
+
+  const addSparkLog = (entry: SparkLogEntry) =>
+    setSparkLog(prev => prev.map(e => e.id === entry.id ? entry : e).concat(prev.find(e => e.id === entry.id) ? [] : [entry]));
+  const updateSparkLog = (id: string, patch: Partial<SparkLogEntry>) =>
+    setSparkLog(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e));
+
   const [isSparkRecording, setIsSparkRecording] = useState(false);
   const [isSparkConnecting, setIsSparkConnecting] = useState(false);
   const sparkSocketRef = useRef<WebSocket | null>(null);
@@ -802,6 +815,13 @@ export default function Build() {
     if (!ghostwriterDesc.trim() || ghostwriterGenerating) return;
     setGhostwriterGenerating(true);
     setGhostwriterResult(null);
+    setSparkLog([]);
+    setSparkSuggestions([]);
+    setSparkPhase("building");
+
+    // Stage 1 — analysing
+    addSparkLog({ id: "analyse", status: "loading", message: "Analysing your description…", icon: "sparkles" });
+
     try {
       const res = await fetch("/api/agents/generate-prompt", {
         method: "POST",
@@ -810,11 +830,64 @@ export default function Build() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
+
+      // Stage 2 — log results with staggered reveals
+      updateSparkLog("analyse", { status: "done", message: `Agent identity created — "${data.agentName}"`, icon: "sparkles" });
+
+      await new Promise(r => setTimeout(r, 280));
+      addSparkLog({ id: "prompt", status: "done", message: "System prompt written — Personality, Capabilities & Communication Style", icon: "check" });
+
+      await new Promise(r => setTimeout(r, 280));
+      addSparkLog({ id: "config", status: "done", message: "Configured with GPT-4o · Fable voice · English (US)", icon: "check" });
+
+      await new Promise(r => setTimeout(r, 280));
+      addSparkLog({ id: "webex", status: "done", message: "Webex integration enabled", icon: "check" });
+
+      await new Promise(r => setTimeout(r, 280));
+      addSparkLog({ id: "retail", status: "done", message: "Retail database queued for knowledge base", icon: "db" });
+
       setGhostwriterResult(data);
+      setSparkSuggestions(data.suggestions || []);
+
+      await new Promise(r => setTimeout(r, 350));
+      setSparkPhase("ready");
     } catch (err: any) {
+      setSparkPhase("input");
       toast({ title: "Generation failed", description: err.message, variant: "destructive" });
     } finally {
       setGhostwriterGenerating(false);
+    }
+  };
+
+  const handleSparkRefinement = async (refinement: string) => {
+    if (!refinement.trim() || sparkRefining || !ghostwriterResult) return;
+    setSparkRefining(true);
+    const refId = `ref-${Date.now()}`;
+    addSparkLog({ id: refId, status: "loading", message: `Refining: "${refinement.trim()}"…`, icon: "wrench" });
+    setSparkCustomInput("");
+    setSparkSuggestions([]);
+
+    try {
+      const res = await fetch("/api/agents/refine-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemPrompt: ghostwriterResult.systemPrompt,
+          agentName: ghostwriterResult.agentName,
+          refinement: refinement.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Refinement failed");
+
+      updateSparkLog(refId, { status: "done", message: data.summary || "System prompt updated", icon: "check" });
+      setGhostwriterResult(prev => prev ? { ...prev, systemPrompt: data.systemPrompt } : prev);
+      setSparkSuggestions(data.suggestions || []);
+    } catch (err: any) {
+      updateSparkLog(refId, { status: "done", message: `Could not apply refinement: ${err.message}`, icon: "check" });
+      toast({ title: "Refinement failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSparkRefining(false);
     }
   };
 
@@ -1103,46 +1176,120 @@ export default function Build() {
                     )}
                   </div>
 
-                  {/* Generated result preview */}
-                  {ghostwriterResult && !ghostwriterGenerating && (
+                  {/* Spark Builder activity log + suggestions */}
+                  {sparkLog.length > 0 && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="mt-5 p-4 rounded-xl bg-background/70 border border-violet-500/20 space-y-3"
-                      data-testid="ghostwriter-result"
+                      className="mt-5 space-y-3"
+                      data-testid="spark-builder-log"
                     >
-                      <div className="flex items-center gap-2">
-                        <Check className="w-4 h-4 text-green-400 shrink-0" />
-                        <span className="text-sm font-medium">Agent generated</span>
-                        <span className="ml-auto text-xs text-muted-foreground italic">"{ghostwriterResult.agentName}"</span>
+                      {/* Activity log */}
+                      <div className="rounded-xl bg-background/60 border border-white/10 divide-y divide-white/5 overflow-hidden">
+                        {sparkLog.map((entry, i) => (
+                          <motion.div
+                            key={entry.id}
+                            initial={{ opacity: 0, x: -8 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: i * 0.05 }}
+                            className="flex items-center gap-3 px-4 py-2.5"
+                          >
+                            <div className="w-5 h-5 shrink-0 flex items-center justify-center">
+                              {entry.status === "loading"
+                                ? <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
+                                : entry.icon === "sparkles"
+                                ? <Sparkles className="w-4 h-4 text-violet-400" />
+                                : entry.icon === "db"
+                                ? <Database className="w-4 h-4 text-blue-400" />
+                                : entry.icon === "wrench"
+                                ? <Wrench className="w-4 h-4 text-amber-400" />
+                                : <Check className="w-4 h-4 text-green-400" />
+                              }
+                            </div>
+                            <span className="text-xs text-foreground/80">{entry.message}</span>
+                          </motion.div>
+                        ))}
                       </div>
-                      <p className="text-xs text-muted-foreground line-clamp-4 leading-relaxed font-mono whitespace-pre-wrap">
-                        {ghostwriterResult.systemPrompt}
-                      </p>
-                      <div className="flex gap-2 pt-1">
-                        <Button
-                          size="sm"
-                          onClick={applyGhostwriterResult}
-                          disabled={ghostwriterCreating}
-                          className="bg-violet-600 hover:bg-violet-500 text-white"
-                          data-testid="button-ghostwriter-apply"
+
+                      {/* What would you like to add next? */}
+                      {sparkPhase === "ready" && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.15 }}
+                          className="space-y-3 pt-1"
                         >
-                          {ghostwriterCreating
-                            ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Creating…</>
-                            : <><Sparkles className="w-3 h-3 mr-1.5" /> Create Agent</>
-                          }
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={handleGhostwriter}
-                          disabled={ghostwriterCreating}
-                          className="text-muted-foreground"
-                          data-testid="button-ghostwriter-regenerate"
-                        >
-                          <RefreshCw className="w-3 h-3 mr-1.5" /> Regenerate
-                        </Button>
-                      </div>
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-0.5">
+                            What would you like to add next?
+                          </p>
+
+                          {/* Suggestion chips */}
+                          {sparkSuggestions.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {sparkSuggestions.map((s, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => handleSparkRefinement(s)}
+                                  disabled={sparkRefining || ghostwriterCreating}
+                                  data-testid={`spark-suggestion-${i}`}
+                                  className="text-xs px-3 py-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:border-violet-400/50 transition-all disabled:opacity-40 text-left"
+                                >
+                                  {s}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Custom refinement input */}
+                          <div className="flex gap-2">
+                            <Input
+                              value={sparkCustomInput}
+                              onChange={e => setSparkCustomInput(e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSparkRefinement(sparkCustomInput); } }}
+                              placeholder="Or type your own request…"
+                              className="h-9 text-sm bg-background/60 border-white/10"
+                              disabled={sparkRefining || ghostwriterCreating}
+                              data-testid="input-spark-custom"
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleSparkRefinement(sparkCustomInput)}
+                              disabled={!sparkCustomInput.trim() || sparkRefining || ghostwriterCreating}
+                              className="h-9 px-3 border-white/10"
+                              data-testid="button-spark-refine"
+                            >
+                              {sparkRefining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                            </Button>
+                          </div>
+
+                          {/* Action buttons */}
+                          <div className="flex gap-2 pt-2 border-t border-white/8">
+                            <Button
+                              size="sm"
+                              onClick={applyGhostwriterResult}
+                              disabled={ghostwriterCreating || sparkRefining}
+                              className="bg-violet-600 hover:bg-violet-500 text-white"
+                              data-testid="button-ghostwriter-apply"
+                            >
+                              {ghostwriterCreating
+                                ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> Creating…</>
+                                : <><Sparkles className="w-3 h-3 mr-1.5" /> Create Agent</>
+                              }
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => { setSparkPhase("input"); setSparkLog([]); setSparkSuggestions([]); setGhostwriterResult(null); }}
+                              disabled={ghostwriterCreating || sparkRefining}
+                              className="text-muted-foreground"
+                              data-testid="button-spark-restart"
+                            >
+                              <RefreshCw className="w-3 h-3 mr-1.5" /> Start over
+                            </Button>
+                          </div>
+                        </motion.div>
+                      )}
                     </motion.div>
                   )}
                 </div>
