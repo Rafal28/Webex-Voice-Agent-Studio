@@ -453,7 +453,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Spark Builder: generate agent name + system prompt + next-step suggestions
+  // Spark Builder: generate agent name + system prompt + contextual suggestions + integrations
   app.post("/api/agents/generate-prompt", async (req, res) => {
     try {
       const openai = getOpenAIClient();
@@ -467,18 +467,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         messages: [
           {
             role: "system",
-            content: `You are an expert AI voice agent designer. Given a user's description, generate:
-1. A short, memorable agent name (2-3 words, title case, no "AI" or "Bot" suffix)
-2. A complete, production-ready system prompt with three sections: # Personality, # Capabilities, # Communication Style
-3. Five concise, specific suggestions for further enhancements the user could add — phrase them as actionable requests the user could make, e.g. "Add a friendly greeting for first-time callers" or "Define escalation rules for unresolved complaints"
+            content: `You are an expert AI voice agent designer. Given a user's description of an agent, generate:
 
-Keep the system prompt under 400 words.
-Return valid JSON: {"agentName":"...","systemPrompt":"...","suggestions":["...","...","...","...","..."]}`
+1. "agentName" — short, memorable (2-3 words, title case, no "AI"/"Bot" suffix)
+2. "agentCategory" — one of: retail, banking, healthcare, support, sales, scheduling, personal, education, travel, other
+3. "systemPrompt" — production-ready system prompt with # Personality, # Capabilities, # Communication Style sections (under 400 words)
+4. "suggestions" — exactly 5 specific, actionable refinements phrased as user requests, tailored to the agent's category. Examples for a retail agent: "Add rules for handling damaged items", "Create a policy for expedited shipping requests". Make them category-specific, not generic.
+5. "suggestedIntegrations" — exactly 3 relevant integration objects, each with "name" and "reason". Pick from this catalog matching the agent's category:
+   - Retail: Stripe (payments/refunds), Shopify (product catalog), FedEx/UPS (shipping tracking)
+   - Banking: Plaid (account data), Stripe (transactions), Twilio (SMS verification)
+   - Healthcare: Google Calendar (appointments), Twilio (reminders), Epic/Cerner (patient records)
+   - Support: Zendesk (tickets), Jira (bug tracking), Slack (team alerts)
+   - Sales: HubSpot (CRM), Salesforce (pipeline), Calendly (scheduling)
+   - Scheduling: Google Calendar, Outlook, Calendly
+   - Personal/other: Gmail, Slack, Notion, Zapier
+   Pick whichever 3 make the most sense for the described use case.
+
+Return valid JSON only: {"agentName":"...","agentCategory":"...","systemPrompt":"...","suggestions":[...],"suggestedIntegrations":[{"name":"...","reason":"..."},...]}`
           },
           { role: "user", content: description.trim() }
         ],
         response_format: { type: "json_object" },
-        max_tokens: 1000
+        max_tokens: 1400
       });
 
       const raw = completion.choices[0].message.content || "{}";
@@ -488,8 +498,10 @@ Return valid JSON: {"agentName":"...","systemPrompt":"...","suggestions":["...",
       }
       res.json({
         agentName: result.agentName,
+        agentCategory: result.agentCategory || "other",
         systemPrompt: result.systemPrompt,
-        suggestions: Array.isArray(result.suggestions) ? result.suggestions.slice(0, 5) : []
+        suggestions: Array.isArray(result.suggestions) ? result.suggestions.slice(0, 5) : [],
+        suggestedIntegrations: Array.isArray(result.suggestedIntegrations) ? result.suggestedIntegrations.slice(0, 3) : []
       });
     } catch (err: any) {
       console.error("[SparkBuilder] generate-prompt error:", err.message);
@@ -515,19 +527,20 @@ Return valid JSON: {"agentName":"...","systemPrompt":"...","suggestions":["...",
             role: "system",
             content: `You are an expert AI voice agent designer. You have an existing agent system prompt and the user wants to refine or extend it.
 Apply the refinement thoughtfully. Then return:
-1. The updated system prompt (keep the # Personality, # Capabilities, # Communication Style structure)
-2. A short one-sentence summary of what you changed (e.g. "Added a friendly greeting for first-time callers")
-3. Four new suggestions for further enhancements, different from what was just done
+1. "systemPrompt" — updated prompt (keep the # Personality, # Capabilities, # Communication Style structure)
+2. "summary" — short one-sentence summary of what you changed (e.g. "Added a friendly greeting for first-time callers")
+3. "suggestions" — 4 new specific, category-appropriate refinement suggestions, different from what was just done
+4. "suggestedIntegrations" — up to 2 integration objects with "name" and "reason", only if the refinement suggests new integrations would help. Use integrations like Stripe, Shopify, Plaid, Twilio, Google Calendar, HubSpot, Zendesk, Slack, Gmail, Notion, Zapier, Calendly, Salesforce, Jira. Omit or return empty array if none apply.
 
-Return valid JSON: {"systemPrompt":"...","summary":"...","suggestions":["...","...","...","..."]}`
+Return valid JSON: {"systemPrompt":"...","summary":"...","suggestions":[...],"suggestedIntegrations":[...]}`
           },
           {
             role: "user",
-            content: `Agent name: ${agentName || "the agent"}\n\nCurrent system prompt:\n${systemPrompt}\n\nRefinement requested: ${refinement}`
+            content: `Agent name: ${agentName || "the agent"}\n\nCurrent system prompt:\n${systemPrompt}\n\nAlready connected integrations: ${(req.body.activeIntegrations || ["Webex", "Retail Database"]).join(", ")}\n\nRefinement requested: ${refinement}`
           }
         ],
         response_format: { type: "json_object" },
-        max_tokens: 1000
+        max_tokens: 1200
       });
 
       const raw = completion.choices[0].message.content || "{}";
@@ -535,7 +548,8 @@ Return valid JSON: {"systemPrompt":"...","summary":"...","suggestions":["...",".
       res.json({
         systemPrompt: result.systemPrompt || systemPrompt,
         summary: result.summary || "System prompt updated",
-        suggestions: Array.isArray(result.suggestions) ? result.suggestions.slice(0, 4) : []
+        suggestions: Array.isArray(result.suggestions) ? result.suggestions.slice(0, 4) : [],
+        suggestedIntegrations: Array.isArray(result.suggestedIntegrations) ? result.suggestedIntegrations.slice(0, 2) : []
       });
     } catch (err: any) {
       console.error("[SparkBuilder] refine-prompt error:", err.message);

@@ -590,11 +590,14 @@ export default function Build() {
 
   const [ghostwriterDesc, setGhostwriterDesc] = useState("");
   const [ghostwriterGenerating, setGhostwriterGenerating] = useState(false);
-  const [ghostwriterResult, setGhostwriterResult] = useState<{ agentName: string; systemPrompt: string } | null>(null);
+  const [ghostwriterResult, setGhostwriterResult] = useState<{ agentName: string; systemPrompt: string; agentCategory?: string } | null>(null);
 
-  type SparkLogEntry = { id: string; status: "done" | "loading"; message: string; icon: "check" | "sparkles" | "db" | "mic" | "wrench" };
+  type SparkLogEntry = { id: string; status: "done" | "loading"; message: string; icon: "check" | "sparkles" | "db" | "mic" | "wrench" | "plug" };
+  type SparkIntegration = { name: string; reason: string };
   const [sparkLog, setSparkLog] = useState<SparkLogEntry[]>([]);
   const [sparkSuggestions, setSparkSuggestions] = useState<string[]>([]);
+  const [sparkSuggestedIntegrations, setSparkSuggestedIntegrations] = useState<SparkIntegration[]>([]);
+  const [sparkActiveIntegrations, setSparkActiveIntegrations] = useState<string[]>([]);
   const [sparkPhase, setSparkPhase] = useState<"input" | "building" | "ready">("input");
   const [sparkCustomInput, setSparkCustomInput] = useState("");
   const [sparkRefining, setSparkRefining] = useState(false);
@@ -817,7 +820,14 @@ export default function Build() {
     setGhostwriterResult(null);
     setSparkLog([]);
     setSparkSuggestions([]);
+    setSparkSuggestedIntegrations([]);
     setSparkPhase("building");
+
+    // Initialize personality attributes to Spark defaults (user can change after)
+    setSelectedLLM("gpt-4");
+    setSelectedVoice("fable");
+    setLanguage("en-US");
+    setGender("neutral");
 
     // Stage 1 — analysing
     addSparkLog({ id: "analyse", status: "loading", message: "Analysing your description…", icon: "sparkles" });
@@ -846,8 +856,13 @@ export default function Build() {
       await new Promise(r => setTimeout(r, 280));
       addSparkLog({ id: "retail", status: "done", message: "Retail database queued for knowledge base", icon: "db" });
 
-      setGhostwriterResult(data);
+      // Active integrations: Webex + Retail DB always connected
+      const active = ["Webex Messaging", "Retail Database"];
+      setSparkActiveIntegrations(active);
+
+      setGhostwriterResult({ agentName: data.agentName, systemPrompt: data.systemPrompt, agentCategory: data.agentCategory });
       setSparkSuggestions(data.suggestions || []);
+      setSparkSuggestedIntegrations(data.suggestedIntegrations || []);
 
       await new Promise(r => setTimeout(r, 350));
       setSparkPhase("ready");
@@ -875,6 +890,7 @@ export default function Build() {
           systemPrompt: ghostwriterResult.systemPrompt,
           agentName: ghostwriterResult.agentName,
           refinement: refinement.trim(),
+          activeIntegrations: sparkActiveIntegrations,
         }),
       });
       const data = await res.json();
@@ -883,6 +899,14 @@ export default function Build() {
       updateSparkLog(refId, { status: "done", message: data.summary || "System prompt updated", icon: "check" });
       setGhostwriterResult(prev => prev ? { ...prev, systemPrompt: data.systemPrompt } : prev);
       setSparkSuggestions(data.suggestions || []);
+      // Merge any newly suggested integrations (dedupe against active + existing suggestions)
+      if (Array.isArray(data.suggestedIntegrations) && data.suggestedIntegrations.length) {
+        setSparkSuggestedIntegrations(prev => {
+          const existing = new Set([...prev.map(p => p.name.toLowerCase()), ...sparkActiveIntegrations.map(a => a.toLowerCase())]);
+          const fresh = data.suggestedIntegrations.filter((i: SparkIntegration) => !existing.has(i.name.toLowerCase()));
+          return [...prev, ...fresh].slice(0, 5);
+        });
+      }
     } catch (err: any) {
       updateSparkLog(refId, { status: "done", message: `Could not apply refinement: ${err.message}`, icon: "check" });
       toast({ title: "Refinement failed", description: err.message, variant: "destructive" });
@@ -992,10 +1016,10 @@ export default function Build() {
       const agent = await agentsApi.create({
         name: ghostwriterResult.agentName,
         systemPrompt: ghostwriterResult.systemPrompt,
-        llmModel: "gpt-4",
-        voiceModel: "fable",
-        language: "en-US",
-        gender: "neutral",
+        llmModel: selectedLLM,
+        voiceModel: selectedVoice,
+        language,
+        gender,
       });
 
       // Copy the Retail DB KB item to the new agent
@@ -1210,6 +1234,142 @@ export default function Build() {
                           </motion.div>
                         ))}
                       </div>
+
+                      {/* Personality Attributes — editable */}
+                      {sparkPhase === "ready" && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="rounded-xl bg-background/60 border border-white/10 p-4 space-y-3"
+                          data-testid="spark-personality"
+                        >
+                          <div className="flex items-center gap-2">
+                            <User className="w-3.5 h-3.5 text-violet-400" />
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                              Agent Personality
+                            </p>
+                            <span className="ml-auto text-[10px] text-muted-foreground italic">tap to change</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <div className="space-y-1">
+                              <Label className="text-[10px] uppercase text-muted-foreground tracking-wider">LLM</Label>
+                              <Select value={selectedLLM} onValueChange={setSelectedLLM}>
+                                <SelectTrigger className="h-8 text-xs bg-background/70 border-white/10" data-testid="select-spark-llm">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {LLMS.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[10px] uppercase text-muted-foreground tracking-wider">Voice</Label>
+                              <Select value={selectedVoice} onValueChange={setSelectedVoice}>
+                                <SelectTrigger className="h-8 text-xs bg-background/70 border-white/10" data-testid="select-spark-voice">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {VOICES.map(v => <SelectItem key={v.id} value={v.id}>{v.name} · {v.gender}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[10px] uppercase text-muted-foreground tracking-wider">Language</Label>
+                              <Select value={language} onValueChange={setLanguage}>
+                                <SelectTrigger className="h-8 text-xs bg-background/70 border-white/10" data-testid="select-spark-language">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="en-US">English (US)</SelectItem>
+                                  <SelectItem value="en-GB">English (UK)</SelectItem>
+                                  <SelectItem value="es-ES">Spanish</SelectItem>
+                                  <SelectItem value="fr-FR">French</SelectItem>
+                                  <SelectItem value="de-DE">German</SelectItem>
+                                  <SelectItem value="ar-SA">Arabic</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[10px] uppercase text-muted-foreground tracking-wider">Gender</Label>
+                              <Select value={gender} onValueChange={setGender}>
+                                <SelectTrigger className="h-8 text-xs bg-background/70 border-white/10" data-testid="select-spark-gender">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="male">Male</SelectItem>
+                                  <SelectItem value="female">Female</SelectItem>
+                                  <SelectItem value="neutral">Neutral</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {/* Integrations: active + suggested */}
+                      {sparkPhase === "ready" && (sparkActiveIntegrations.length > 0 || sparkSuggestedIntegrations.length > 0) && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.1 }}
+                          className="rounded-xl bg-background/60 border border-white/10 p-4 space-y-3"
+                          data-testid="spark-integrations"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                              Integrations
+                            </p>
+                          </div>
+
+                          {sparkActiveIntegrations.length > 0 && (
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] uppercase tracking-wider text-emerald-400/80">Connected</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {sparkActiveIntegrations.map((name, i) => (
+                                  <span
+                                    key={i}
+                                    className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"
+                                    data-testid={`spark-active-integration-${i}`}
+                                  >
+                                    <Check className="w-3 h-3" /> {name}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {sparkSuggestedIntegrations.length > 0 && (
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] uppercase tracking-wider text-amber-400/80">Recommended for this agent</p>
+                              <div className="space-y-1.5">
+                                {sparkSuggestedIntegrations.map((intg, i) => (
+                                  <button
+                                    key={intg.name}
+                                    onClick={() => {
+                                      // Optimistically promote to "Connected" and remove from suggestions
+                                      setSparkActiveIntegrations(prev =>
+                                        prev.some(p => p.toLowerCase() === intg.name.toLowerCase()) ? prev : [...prev, intg.name]
+                                      );
+                                      setSparkSuggestedIntegrations(prev => prev.filter(p => p.name !== intg.name));
+                                      handleSparkRefinement(`Connect ${intg.name} integration — ${intg.reason}`);
+                                    }}
+                                    disabled={sparkRefining || ghostwriterCreating}
+                                    data-testid={`spark-suggested-integration-${i}`}
+                                    className="w-full flex items-start gap-2 p-2 rounded-lg border border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 hover:border-amber-400/40 transition-all disabled:opacity-40 text-left group"
+                                  >
+                                    <Plus className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5 group-hover:scale-110 transition-transform" />
+                                    <div className="flex-1 min-w-0">
+                                      <span className="text-xs font-medium text-amber-200">{intg.name}</span>
+                                      <span className="block text-[11px] text-muted-foreground leading-snug">{intg.reason}</span>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
 
                       {/* What would you like to add next? */}
                       {sparkPhase === "ready" && (
