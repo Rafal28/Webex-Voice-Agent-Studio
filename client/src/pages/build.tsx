@@ -602,6 +602,19 @@ export default function Build() {
   const [sparkCustomInput, setSparkCustomInput] = useState("");
   const [sparkRefining, setSparkRefining] = useState(false);
 
+  const [sparkPromptOpen, setSparkPromptOpen] = useState(false);
+
+  // Extract the "# Rules" section content from a system prompt
+  const extractRulesSection = (prompt: string): string[] => {
+    if (!prompt) return [];
+    const m = prompt.match(/#\s*Rules\s*\n([\s\S]*?)(?:\n#\s|\s*$)/i);
+    if (!m) return [];
+    return m[1]
+      .split(/\n+/)
+      .map(line => line.replace(/^\s*[-\*\d]+\.?\s*/, "").trim())
+      .filter(line => line.length > 0 && !/^follow user instructions carefully\.?$/i.test(line));
+  };
+
   const addSparkLog = (entry: SparkLogEntry) =>
     setSparkLog(prev => prev.map(e => e.id === entry.id ? entry : e).concat(prev.find(e => e.id === entry.id) ? [] : [entry]));
   const updateSparkLog = (id: string, patch: Partial<SparkLogEntry>) =>
@@ -1370,6 +1383,61 @@ export default function Build() {
                           )}
                         </motion.div>
                       )}
+
+                      {/* Custom Rules — what the agent will be FORCED to do */}
+                      {sparkPhase === "ready" && ghostwriterResult && (() => {
+                        const rules = extractRulesSection(ghostwriterResult.systemPrompt);
+                        return (
+                          <motion.div
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.12 }}
+                            className="rounded-xl bg-background/60 border border-white/10 p-4 space-y-3"
+                            data-testid="spark-custom-rules"
+                          >
+                            <div className="flex items-center gap-2">
+                              <Shield className="w-3.5 h-3.5 text-rose-400" />
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                Custom Rules
+                              </p>
+                              <span className="ml-auto text-[10px] text-muted-foreground">
+                                {rules.length === 0 ? "none yet" : `${rules.length} rule${rules.length === 1 ? "" : "s"}`}
+                              </span>
+                            </div>
+                            {rules.length === 0 ? (
+                              <p className="text-xs text-muted-foreground italic leading-relaxed">
+                                No custom rules yet. Use the suggestions or the input below to add behaviors the agent <span className="text-rose-300 font-medium">must</span> follow — e.g. <span className="text-foreground/70">"verify identity by email before sharing balances"</span>.
+                              </p>
+                            ) : (
+                              <ol className="space-y-1.5">
+                                {rules.map((rule, i) => (
+                                  <li
+                                    key={i}
+                                    className="flex items-start gap-2 text-xs text-foreground/85 leading-snug"
+                                    data-testid={`spark-rule-${i}`}
+                                  >
+                                    <span className="text-rose-400 font-mono shrink-0 mt-0.5">{i + 1}.</span>
+                                    <span>{rule}</span>
+                                  </li>
+                                ))}
+                              </ol>
+                            )}
+                            <button
+                              onClick={() => setSparkPromptOpen(o => !o)}
+                              className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                              data-testid="button-toggle-prompt"
+                            >
+                              {sparkPromptOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                              {sparkPromptOpen ? "Hide" : "View"} full system prompt
+                            </button>
+                            {sparkPromptOpen && (
+                              <pre className="text-[10px] font-mono whitespace-pre-wrap leading-relaxed bg-background/70 border border-white/8 rounded-lg p-3 max-h-60 overflow-y-auto text-foreground/70" data-testid="spark-system-prompt">
+                                {ghostwriterResult.systemPrompt}
+                              </pre>
+                            )}
+                          </motion.div>
+                        );
+                      })()}
 
                       {/* What would you like to add next? */}
                       {sparkPhase === "ready" && (

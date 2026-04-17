@@ -1445,6 +1445,10 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
       let enrichedSystemPrompt = data.personaConfig?.systemPrompt || "You are a helpful AI assistant. Reply in natural speech without formatting.";
 
+      // Extract # Rules section so we can re-state it at the very end (LLMs follow trailing instructions best)
+      const rulesMatch = enrichedSystemPrompt.match(/#\s*Rules\s*\n([\s\S]*?)(?:\n#\s|\s*$)/i);
+      const rulesText = rulesMatch ? rulesMatch[1].trim() : "";
+
       if (data.agentId) {
         const kbItems = await storage.getKnowledgeBaseItemsByAgent(data.agentId);
         if (kbItems.length > 0) {
@@ -1472,6 +1476,11 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       if (webexRooms.length > 0) {
         const roomsList = webexRooms.map((r: { title: string }) => `- ${r.title}`).join("\n");
         enrichedSystemPrompt += `\n\n## Available Webex Rooms:\n${roomsList}`;
+      }
+
+      // Reinforce mandatory rules at the very end so they are the LAST instructions the LLM sees
+      if (rulesText && !/follow user instructions carefully\.?\s*$/i.test(rulesText)) {
+        enrichedSystemPrompt += `\n\n## ⚠️ MANDATORY RULES (NEVER IGNORE)\nThese rules OVERRIDE all other guidance above. You MUST follow every rule strictly. Refuse to proceed if a required step has not been completed.\n\n${rulesText}`;
       }
 
       const response = await fetch("https://api.anam.ai/v1/auth/session-token", {
