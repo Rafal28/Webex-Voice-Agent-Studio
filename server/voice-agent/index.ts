@@ -105,6 +105,10 @@ function handleTwilioSession(ws: WebSocket): void {
           console.error("[VoiceAgent/Twilio] Error:", err.message);
         });
 
+        openai.once("sessionReady", () => {
+          openai!.triggerResponse();
+        });
+
         openai.connect();
         break;
       }
@@ -195,6 +199,10 @@ function handleBrowserSession(ws: WebSocket): void {
           responseActive = false;
           audioChunkCount = 0;
           sendEvent({ type: "responseDone" });
+        });
+
+        openai.once("sessionReady", () => {
+          openai!.triggerResponse();
         });
 
         openai.on("error", (err: Error) => {

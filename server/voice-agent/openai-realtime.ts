@@ -150,6 +150,10 @@ export class OpenAIRealtimeClient extends EventEmitter {
     this.send({ type: "response.cancel" });
   }
 
+  triggerResponse(): void {
+    this.send({ type: "response.create" });
+  }
+
   sendFunctionOutput(callId: string, output: string): void {
     this.send({
       type: "conversation.item.create",
