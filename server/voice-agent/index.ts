@@ -126,6 +126,9 @@ function handleTwilioSession(ws: WebSocket): void {
 
 function handleBrowserSession(ws: WebSocket): void {
   let openai: OpenAIRealtimeClient | null = null;
+  let lastItemId: string | null = null;
+  let responseActive = false;
+  let audioChunkCount = 0;
 
   ws.on("message", async (raw) => {
     if (Buffer.isBuffer(raw) && openai) {
@@ -157,13 +160,25 @@ function handleBrowserSession(ws: WebSocket): void {
           outputAudioFormat: "pcm16",
         });
 
-        openai.on("audio", (base64: string) => {
+        openai.on("audio", (base64: string, itemId: string) => {
+          lastItemId = itemId;
+          responseActive = true;
+          audioChunkCount++;
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(Buffer.from(base64, "base64"));
           }
         });
 
         openai.on("speechStarted", () => {
+          if (responseActive && lastItemId) {
+            const estimatedMs = audioChunkCount * 100;
+            openai!.truncateResponse(lastItemId, estimatedMs);
+            openai!.cancelResponse();
+          }
+          responseActive = false;
+          audioChunkCount = 0;
+          lastItemId = null;
+          sendEvent({ type: "interruptClear" });
           sendEvent({ type: "speechStarted" });
         });
 
@@ -180,6 +195,8 @@ function handleBrowserSession(ws: WebSocket): void {
         });
 
         openai.on("responseDone", () => {
+          responseActive = false;
+          audioChunkCount = 0;
           sendEvent({ type: "responseDone" });
         });
 

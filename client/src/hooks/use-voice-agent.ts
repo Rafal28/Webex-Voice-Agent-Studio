@@ -23,8 +23,20 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const nextPlayTimeRef = useRef(0);
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const gainNodeRef = useRef<GainNode | null>(null);
+
+  const clearPlayback = useCallback(() => {
+    activeSourcesRef.current.forEach((src) => {
+      try { src.stop(); } catch {}
+    });
+    activeSourcesRef.current = [];
+    if (audioContextRef.current) {
+      nextPlayTimeRef.current = audioContextRef.current.currentTime;
+    }
+  }, []);
 
   const start = useCallback(async () => {
     try {
@@ -34,7 +46,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       setAssistantPartial("");
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 24000 },
       });
       streamRef.current = stream;
 
@@ -42,9 +54,14 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       audioContextRef.current = audioContext;
       nextPlayTimeRef.current = audioContext.currentTime;
 
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 1.0;
+      gainNode.connect(audioContext.destination);
+      gainNodeRef.current = gainNode;
+
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
+      const processor = audioContext.createScriptProcessor(2048, 1, 1);
+      workletNodeRef.current = processor;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/voice-agent`);
@@ -111,6 +128,10 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       case "connected":
         setState("listening");
         break;
+      case "interruptClear":
+        clearPlayback();
+        setAssistantPartial("");
+        break;
       case "speechStarted":
         setState("speaking");
         break;
@@ -138,7 +159,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   }
 
   function playAudioChunk(arrayBuffer: ArrayBuffer): void {
-    if (!audioContextRef.current) return;
+    if (!audioContextRef.current || !gainNodeRef.current) return;
     const ctx = audioContextRef.current;
     const pcm16 = new Int16Array(arrayBuffer);
     const float32 = new Float32Array(pcm16.length);
@@ -149,17 +170,24 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     buffer.getChannelData(0).set(float32);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(ctx.destination);
+    src.connect(gainNodeRef.current);
     const startTime = Math.max(ctx.currentTime, nextPlayTimeRef.current);
     src.start(startTime);
     nextPlayTimeRef.current = startTime + buffer.duration;
+    activeSourcesRef.current.push(src);
+    src.onended = () => {
+      activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== src);
+    };
   }
 
   function cleanup(): void {
-    processorRef.current?.disconnect();
-    processorRef.current = null;
+    clearPlayback();
+    workletNodeRef.current?.disconnect();
+    workletNodeRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    gainNodeRef.current?.disconnect();
+    gainNodeRef.current = null;
     audioContextRef.current?.close();
     audioContextRef.current = null;
     nextPlayTimeRef.current = 0;
