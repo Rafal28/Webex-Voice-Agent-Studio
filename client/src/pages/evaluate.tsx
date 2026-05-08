@@ -17,6 +17,7 @@ import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, type TTSRe
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
 import { VoiceAgentPanel } from "@/components/voice-agent-panel";
+import type { VoiceAgentState } from "@/hooks/use-voice-agent";
 
 export default function Evaluate() {
   const search = useSearch();
@@ -43,6 +44,7 @@ export default function Evaluate() {
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [voiceState, setVoiceState] = useState<VoiceAgentState>("idle");
   
   const [isRecording, setIsRecording] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -875,9 +877,13 @@ export default function Evaluate() {
         / (evaluations.length * 4)
       )
     : null;
+  const isStoreAssistant =
+    agent.name.toLowerCase().includes("store") ||
+    agent.systemPrompt.toLowerCase().includes("retail store assistant");
+  const showEvaluationControls = !isStoreAssistant;
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans flex flex-col">
+    <div className="h-screen bg-background text-foreground font-sans flex flex-col overflow-hidden">
       <audio 
         ref={audioRef}
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
@@ -885,7 +891,7 @@ export default function Evaluate() {
         onEnded={() => setIsPlaying(false)}
       />
       
-      <header className="border-b border-white/10 bg-background/50 backdrop-blur-md h-16 flex items-center px-6 justify-between sticky top-0 z-50">
+      <header className="shrink-0 border-b border-white/10 bg-background/50 backdrop-blur-md h-16 flex items-center px-6 justify-between sticky top-0 z-50">
         <div className="flex items-center gap-4">
           <Link href="/">
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
@@ -911,7 +917,7 @@ export default function Evaluate() {
                <CheckCircle2 className="w-3 h-3" /> Authenticated
              </Badge>
            )}
-           {avgScore !== null && (
+           {showEvaluationControls && avgScore !== null && (
              <Badge className="bg-primary/10 text-primary border-primary/20">
                Avg Score: {avgScore}%
              </Badge>
@@ -919,22 +925,41 @@ export default function Evaluate() {
            <Button variant="outline" size="sm" className="border-white/10 bg-white/5 hover:bg-white/10">
              <Settings2 className="w-4 h-4 mr-2" /> Settings
            </Button>
-           <Button 
-             size="sm" 
-             className="bg-primary text-primary-foreground hover:bg-primary/90"
-             onClick={handleSaveEvaluation}
-             disabled={saveEvaluationMutation.isPending}
-             data-testid="button-save-evaluation"
-           >
-             <Download className="w-4 h-4 mr-2" /> 
-             {saveEvaluationMutation.isPending ? "Saving..." : "Save Evaluation"}
-           </Button>
+           {showEvaluationControls && (
+             <Button
+               size="sm"
+               className="bg-primary text-primary-foreground hover:bg-primary/90"
+               onClick={handleSaveEvaluation}
+               disabled={saveEvaluationMutation.isPending}
+               data-testid="button-save-evaluation"
+             >
+               <Download className="w-4 h-4 mr-2" />
+               {saveEvaluationMutation.isPending ? "Saving..." : "Save Evaluation"}
+             </Button>
+           )}
         </div>
       </header>
 
-      <main className="flex-1 grid lg:grid-cols-12 gap-0 overflow-hidden">
-        
-        <div className="lg:col-span-7 flex flex-col border-r border-white/10 bg-card/20 p-6 overflow-y-auto">
+      <main className="flex-1 min-h-0 grid lg:grid-cols-12 gap-0 overflow-hidden">
+        {isStoreAssistant ? (
+          <>
+            <div className="lg:col-span-8 flex flex-col min-h-0 border-r border-white/10 bg-card/20">
+              <VoiceAgentPanel
+                agentId={agent.id}
+                agentName={agent.name}
+                systemPrompt={agent.systemPrompt || undefined}
+                voice={agent.voiceModel}
+                onStateChange={setVoiceState}
+              />
+            </div>
+
+            <div className="hidden lg:flex lg:col-span-4 min-h-0 bg-background border-l border-white/5">
+              <StoreAssistantCallStage agentName={agent.name} state={voiceState} />
+            </div>
+          </>
+        ) : (
+          <>
+        <div className="lg:col-span-7 flex flex-col min-h-0 border-r border-white/10 bg-card/20 p-6 overflow-y-auto">
            {anamStatus?.configured && (
              <div className="mb-4">
                <div
@@ -1187,7 +1212,7 @@ export default function Evaluate() {
            </div>
         </div>
 
-        <div className="lg:col-span-5 bg-background border-l border-white/5 flex flex-col overflow-hidden">
+        <div className="lg:col-span-5 min-h-0 bg-background border-l border-white/5 flex flex-col overflow-hidden">
           <Tabs defaultValue="voice" className="flex flex-col h-full">
             <TabsList className="w-full justify-start rounded-none border-b border-white/10 bg-transparent px-4 pt-2 h-auto">
               <TabsTrigger value="voice" className="gap-2 data-[state=active]:bg-white/5 rounded-b-none border-b-2 border-transparent data-[state=active]:border-primary">
@@ -1384,7 +1409,8 @@ export default function Evaluate() {
             </TabsContent>
           </Tabs>
         </div>
-
+          </>
+        )}
       </main>
 
       <canvas ref={ocrCanvasRef} className="hidden" />
@@ -1537,4 +1563,48 @@ export default function Evaluate() {
       )}
     </div>
   );
+}
+
+function StoreAssistantCallStage({ agentName, state }: { agentName: string; state: VoiceAgentState }) {
+  const isActive = state !== "idle";
+  const isTalking = state === "speaking";
+  const status = getVoiceStatusLabel(state);
+  const ringColor = isTalking ? "bg-blue-400/25" : "bg-green-400/25";
+  const iconColor = isTalking ? "text-blue-300" : isActive ? "text-green-300" : "text-primary";
+
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center p-8 text-center">
+      <div className="relative mb-8 flex h-36 w-36 items-center justify-center rounded-full border border-primary/20 bg-primary/10">
+        {isActive && (
+          <>
+            <span className={`absolute inset-0 rounded-full ${ringColor} animate-ping`} />
+            <span className={`absolute inset-4 rounded-full ${ringColor} animate-pulse`} />
+          </>
+        )}
+        {state === "connecting" ? (
+          <Loader2 className="relative z-10 h-12 w-12 animate-spin text-yellow-300" />
+        ) : (
+          <Mic className={`relative z-10 h-12 w-12 ${iconColor}`} />
+        )}
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Live Voice</p>
+        <h2 className="text-2xl font-display font-semibold">{agentName}</h2>
+        <p className="text-sm text-muted-foreground" aria-live="polite">{status}</p>
+      </div>
+    </div>
+  );
+}
+
+function getVoiceStatusLabel(state: VoiceAgentState): string {
+  switch (state) {
+    case "connecting":
+      return "Connecting";
+    case "listening":
+      return "Call underway";
+    case "speaking":
+      return "Talking";
+    default:
+      return "Ready";
+  }
 }

@@ -21,6 +21,28 @@ function mapVoice(voice: string): string {
   return OPENAI_REALTIME_VOICE_MAP[voice] || "alloy";
 }
 
+const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
+
+function normalizeTranscript(text: string): string {
+  return text.trim().toLowerCase().replace(/[.!?,\s]+$/g, "");
+}
+
+function shouldSuppressBrowserUserTranscript(
+  text: string,
+  lastAssistantDoneAt: number,
+  acceptedUserTranscriptCount: number,
+  responseActive: boolean
+): boolean {
+  const normalized = normalizeTranscript(text);
+  if (!normalized) return true;
+
+  const isShortFarewell = SPURIOUS_SHORT_TRANSCRIPTS.has(normalized);
+  if (!isShortFarewell) return false;
+
+  const justAfterAssistant = Date.now() - lastAssistantDoneAt < 2500;
+  return responseActive || justAfterAssistant || acceptedUserTranscriptCount === 0;
+}
+
 export function attachVoiceAgentWebSocket(server: Server): void {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -133,6 +155,8 @@ function handleBrowserSession(ws: WebSocket): void {
   let lastItemId: string | null = null;
   let responseActive = false;
   let audioChunkCount = 0;
+  let lastAssistantDoneAt = 0;
+  let acceptedUserTranscriptCount = 0;
 
   ws.on("message", async (raw) => {
     if (Buffer.isBuffer(raw) && openai) {
@@ -184,7 +208,12 @@ function handleBrowserSession(ws: WebSocket): void {
         });
 
         openai.on("userTranscript", (text: string) => {
-          sendEvent({ type: "userTranscript", text: text.trim() });
+          const trimmed = text.trim();
+          if (shouldSuppressBrowserUserTranscript(trimmed, lastAssistantDoneAt, acceptedUserTranscriptCount, responseActive)) {
+            return;
+          }
+          acceptedUserTranscriptCount++;
+          sendEvent({ type: "userTranscript", text: trimmed });
         });
 
         openai.on("assistantTranscriptDelta", (delta: string) => {
@@ -192,7 +221,10 @@ function handleBrowserSession(ws: WebSocket): void {
         });
 
         openai.on("assistantTranscriptDone", (text: string) => {
-          sendEvent({ type: "assistantTranscriptDone", text });
+          const trimmed = text.trim();
+          if (!trimmed) return;
+          lastAssistantDoneAt = Date.now();
+          sendEvent({ type: "assistantTranscriptDone", text: trimmed });
         });
 
         openai.on("responseDone", () => {

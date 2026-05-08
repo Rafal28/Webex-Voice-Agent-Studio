@@ -24,6 +24,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
+  const processorSinkRef = useRef<GainNode | null>(null);
   const nextPlayTimeRef = useRef(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const gainNodeRef = useRef<GainNode | null>(null);
@@ -61,7 +62,10 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
 
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(2048, 1, 1);
+      const processorSink = audioContext.createGain();
+      processorSink.gain.value = 0;
       workletNodeRef.current = processor;
+      processorSinkRef.current = processorSink;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/voice-agent`);
@@ -107,7 +111,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       };
 
       source.connect(processor);
-      processor.connect(audioContext.destination);
+      processor.connect(processorSink);
+      processorSink.connect(audioContext.destination);
     } catch (err: any) {
       setError(err.message || "Failed to start voice agent");
       setState("idle");
@@ -136,9 +141,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         setState("speaking");
         break;
       case "userTranscript":
-        if (msg.text) {
-          setTranscript((prev) => [...prev, { role: "user", text: msg.text, timestamp: Date.now() }]);
-        }
+        appendTranscript("user", msg.text);
         setState("listening");
         break;
       case "assistantTranscriptDelta":
@@ -146,7 +149,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         setState("speaking");
         break;
       case "assistantTranscriptDone":
-        setTranscript((prev) => [...prev, { role: "assistant", text: msg.text, timestamp: Date.now() }]);
+        appendTranscript("assistant", msg.text);
         setAssistantPartial("");
         break;
       case "responseDone":
@@ -156,6 +159,19 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         setError(msg.message);
         break;
     }
+  }
+
+  function appendTranscript(role: TranscriptEntry["role"], text: string): void {
+    const cleaned = (text || "").trim();
+    if (!cleaned) return;
+
+    const normalized = cleaned.toLowerCase().replace(/[.!?,\s]+$/g, "");
+    setTranscript((prev) => {
+      const last = prev[prev.length - 1];
+      const lastNormalized = last?.text.toLowerCase().replace(/[.!?,\s]+$/g, "");
+      if (last?.role === role && lastNormalized === normalized) return prev;
+      return [...prev, { role, text: cleaned, timestamp: Date.now() }];
+    });
   }
 
   function playAudioChunk(arrayBuffer: ArrayBuffer): void {
@@ -184,6 +200,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     clearPlayback();
     workletNodeRef.current?.disconnect();
     workletNodeRef.current = null;
+    processorSinkRef.current?.disconnect();
+    processorSinkRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     gainNodeRef.current?.disconnect();

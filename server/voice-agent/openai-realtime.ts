@@ -87,6 +87,8 @@ export class OpenAIRealtimeClient extends EventEmitter {
   private handleEvent(event: any): void {
     switch (event.type) {
       case "session.created":
+        this.emit("sessionCreated", event);
+        break;
       case "session.updated":
         this.emit("sessionReady", event);
         break;

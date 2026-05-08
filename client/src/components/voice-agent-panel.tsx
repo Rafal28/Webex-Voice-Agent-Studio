@@ -10,9 +10,10 @@ interface VoiceAgentPanelProps {
   agentName: string;
   systemPrompt?: string;
   voice?: string;
+  onStateChange?: (state: VoiceAgentState) => void;
 }
 
-export function VoiceAgentPanel({ agentId, agentName, systemPrompt, voice }: VoiceAgentPanelProps) {
+export function VoiceAgentPanel({ agentId, agentName, systemPrompt, voice, onStateChange }: VoiceAgentPanelProps) {
   const { state, transcript, assistantPartial, error, start, stop } = useVoiceAgent({
     agentId,
     systemPrompt,
@@ -27,19 +28,50 @@ export function VoiceAgentPanel({ agentId, agentName, systemPrompt, voice }: Voi
     }
   }, [transcript, assistantPartial]);
 
+  useEffect(() => {
+    onStateChange?.(state);
+  }, [onStateChange, state]);
+
   const isActive = state !== "idle";
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-        <div className="flex items-center gap-2">
-          <Phone className="w-4 h-4 text-primary" />
-          <span className="text-sm font-medium">Voice Call</span>
+    <div className="flex flex-col h-full min-h-0">
+      <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10">
+        <div className="flex items-center gap-3 min-w-0">
+          <CallPulse state={state} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Voice Call</span>
+              <StatusBadge state={state} />
+            </div>
+            <p className="text-xs text-muted-foreground truncate">{agentName}</p>
+          </div>
         </div>
-        <StatusBadge state={state} />
+
+        {!isActive ? (
+          <Button
+            size="sm"
+            className="shrink-0 gap-2 bg-green-600 hover:bg-green-700 text-white"
+            onClick={start}
+            data-testid="button-start-call"
+          >
+            <Phone className="w-4 h-4" />
+            Start Call
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            className="shrink-0 gap-2 bg-red-600 hover:bg-red-700 text-white"
+            onClick={stop}
+            data-testid="button-end-call"
+          >
+            <PhoneOff className="w-4 h-4" />
+            End Call
+          </Button>
+        )}
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         {transcript.length === 0 && !isActive && (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-12">
             <div className="w-16 h-16 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
@@ -60,7 +92,8 @@ export function VoiceAgentPanel({ agentId, agentName, systemPrompt, voice }: Voi
 
         {transcript.length === 0 && isActive && state === "listening" && (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-12">
-            <div className="w-16 h-16 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center animate-pulse">
+            <div className="relative w-16 h-16 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+              <span className="absolute inset-0 rounded-full bg-green-400/20 animate-ping" />
               <Mic className="w-8 h-8 text-green-400" />
             </div>
             <p className="text-sm text-muted-foreground">Listening... speak now</p>
@@ -73,7 +106,7 @@ export function VoiceAgentPanel({ agentId, agentName, systemPrompt, voice }: Voi
 
         {assistantPartial && (
           <div className="flex gap-3">
-            <Avatar className="h-8 w-8 border border-primary/50 shrink-0">
+            <Avatar className="h-8 w-8 border border-primary/50 shrink-0 ring-2 ring-primary/30 animate-pulse">
               <AvatarFallback className="bg-primary text-black text-xs font-bold">
                 {agentName.charAt(0).toUpperCase()}
               </AvatarFallback>
@@ -94,26 +127,25 @@ export function VoiceAgentPanel({ agentId, agentName, systemPrompt, voice }: Voi
           <p className="text-xs text-red-400">{error}</p>
         </div>
       )}
+    </div>
+  );
+}
 
-      <div className="p-4 border-t border-white/10">
-        {!isActive ? (
-          <Button
-            className="w-full gap-2 bg-green-600 hover:bg-green-700 text-white"
-            onClick={start}
-          >
-            <Phone className="w-4 h-4" />
-            Start Call
-          </Button>
-        ) : (
-          <Button
-            className="w-full gap-2 bg-red-600 hover:bg-red-700 text-white"
-            onClick={stop}
-          >
-            <PhoneOff className="w-4 h-4" />
-            End Call
-          </Button>
-        )}
-      </div>
+function CallPulse({ state }: { state: VoiceAgentState }) {
+  const isActive = state !== "idle";
+  const isTalking = state === "speaking";
+  const color = isTalking ? "bg-blue-400/25" : "bg-green-400/25";
+  const iconColor = isTalking ? "text-blue-300" : isActive ? "text-green-300" : "text-primary";
+
+  return (
+    <div className="relative h-10 w-10 shrink-0 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
+      {isActive && (
+        <>
+          <span className={`absolute inset-0 rounded-full ${color} animate-ping`} />
+          <span className={`absolute inset-1 rounded-full ${color} animate-pulse`} />
+        </>
+      )}
+      <Mic className={`relative z-10 w-4 h-4 ${iconColor}`} />
     </div>
   );
 }
@@ -137,7 +169,7 @@ function StatusBadge({ state }: { state: VoiceAgentState }) {
     case "speaking":
       return (
         <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-xs gap-1">
-          <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" /> Speaking
+          <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" /> Talking
         </Badge>
       );
   }
