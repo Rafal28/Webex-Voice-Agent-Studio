@@ -173,7 +173,6 @@ function handleBrowserSession(ws: WebSocket): void {
           if (responseActive && lastItemId) {
             const estimatedMs = audioChunkCount * 100;
             openai!.truncateResponse(lastItemId, estimatedMs);
-            openai!.cancelResponse();
           }
           responseActive = false;
           audioChunkCount = 0;
