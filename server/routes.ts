@@ -1494,6 +1494,115 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     }).optional(),
   });
 
+  // ── Twilio Voice (inbound calls) ──────────────────────────────────────────
+  app.post("/api/twilio/voice", async (req, res) => {
+    try {
+      const twilio = (await import("twilio")).default;
+      const VoiceResponse = twilio.twiml.VoiceResponse;
+      const twiml = new VoiceResponse();
+
+      const baseUrl = process.env.APP_BASE_URL;
+      if (!baseUrl) {
+        twiml.say("This service is not configured. Goodbye.");
+        twiml.hangup();
+        res.type("text/xml");
+        return res.send(twiml.toString());
+      }
+
+      const greeting = process.env.TWILIO_VOICE_GREETING || "Welcome to Webex Voice Agent Studio. Please leave your message after the tone.";
+      const noRecordingMsg = process.env.TWILIO_VOICE_NO_RECORDING || "We did not receive a recording. Goodbye.";
+
+      twiml.say({ voice: "Polly.Joanna" }, greeting);
+      twiml.record({
+        maxLength: 60,
+        action: `${baseUrl}/api/twilio/voice/recording`,
+        transcribe: true,
+        transcribeCallback: `${baseUrl}/api/twilio/voice/transcription`,
+      });
+      twiml.say(noRecordingMsg);
+
+      res.type("text/xml");
+      res.send(twiml.toString());
+    } catch (error: any) {
+      console.error("Twilio voice webhook error:", error);
+      res.status(500).send("<Response><Say>An error occurred.</Say></Response>");
+    }
+  });
+
+  app.post("/api/twilio/voice/recording", async (req, res) => {
+    const twilio = (await import("twilio")).default;
+    const VoiceResponse = twilio.twiml.VoiceResponse;
+    const twiml = new VoiceResponse();
+    console.log("[Twilio] Recording received:", req.body.RecordingUrl);
+    const farewell = process.env.TWILIO_VOICE_FAREWELL || "Thank you. Your message has been received. Goodbye.";
+    twiml.say(farewell);
+    twiml.hangup();
+    res.type("text/xml");
+    res.send(twiml.toString());
+  });
+
+  app.post("/api/twilio/voice/transcription", async (req, res) => {
+    console.log("[Twilio] Transcription received:", req.body.TranscriptionText);
+    res.sendStatus(200);
+  });
+
+  // ── Twilio SMS (inbound) ────────────────────────────────────────────────────
+  app.post("/api/twilio/sms", async (req, res) => {
+    try {
+      const twilio = (await import("twilio")).default;
+      const MessagingResponse = twilio.twiml.MessagingResponse;
+      const twiml = new MessagingResponse();
+
+      const incomingMsg = req.body.Body || "";
+      const from = req.body.From || "";
+      console.log(`[Twilio SMS] From: ${from}, Body: ${incomingMsg}`);
+
+      const chatClient = getChatClient();
+      if (!chatClient) {
+        twiml.message("AI chat is not configured on this server.");
+        res.type("text/xml");
+        return res.send(twiml.toString());
+      }
+
+      const completion = await chatClient.chat.completions.create({
+        model: CHAT_MODEL,
+        messages: [
+          { role: "system", content: "You are a helpful AI assistant responding via SMS. Keep responses under 160 characters when possible." },
+          { role: "user", content: incomingMsg },
+        ],
+        max_tokens: 200,
+      });
+
+      const reply = completion.choices[0]?.message?.content || "Sorry, I could not process that.";
+      twiml.message(reply);
+      res.type("text/xml");
+      res.send(twiml.toString());
+    } catch (error: any) {
+      console.error("Twilio SMS webhook error:", error);
+      const twilio = (await import("twilio")).default;
+      const MessagingResponse = twilio.twiml.MessagingResponse;
+      const twiml = new MessagingResponse();
+      twiml.message("An error occurred processing your message.");
+      res.type("text/xml");
+      res.send(twiml.toString());
+    }
+  });
+
+  // ── Twilio status endpoint ──────────────────────────────────────────────────
+  app.get("/api/twilio/status", (_req, res) => {
+    const configured = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER);
+    const baseUrl = process.env.APP_BASE_URL || null;
+    res.json({
+      configured,
+      baseUrl,
+      webhooks: baseUrl ? {
+        voice: `${baseUrl}/api/twilio/voice`,
+        sms: `${baseUrl}/api/twilio/sms`,
+      } : null,
+    });
+  });
+
+  // ── Avatar (Anam.ai) ───────────────────────────────────────────────────────
   app.post("/api/anam/session-token", async (req, res) => {
     try {
       const apiKey = process.env.ANAM_API_KEY;

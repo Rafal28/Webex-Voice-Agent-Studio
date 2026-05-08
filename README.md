@@ -145,6 +145,7 @@ WEBEX_ACCESS_TOKEN=...
 TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
 TWILIO_PHONE_NUMBER=...
+APP_BASE_URL=...           # public URL for Twilio webhooks (voice/SMS)
 ANAM_API_KEY=...
 ```
 
@@ -185,6 +186,9 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `TWILIO_ACCOUNT_SID` | For SMS/Voice | Twilio Account SID |
 | `TWILIO_AUTH_TOKEN` | For SMS/Voice | Twilio Auth Token |
 | `TWILIO_PHONE_NUMBER` | For SMS/Voice | e.g. `+15551234567` |
+| `APP_BASE_URL` | For SMS/Voice | Public URL for Twilio webhooks |
+| `TWILIO_VOICE_GREETING` | Optional | Custom voice greeting message |
+| `TWILIO_VOICE_FAREWELL` | Optional | Custom post-recording farewell |
 | `ANAM_API_KEY` | For avatar | Anam.ai streaming |
 
 ### 3. Initialize Database
@@ -327,28 +331,45 @@ Bot tokens never expire. The bot can only see rooms it has been invited to.
 
 ## Twilio Setup (Optional)
 
-### SMS (OTP in Banking Demo)
+### 1. Get Credentials
 
 1. Create an account at https://www.twilio.com/
-2. Get a phone number with **SMS** capability
-3. Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_PHONE_NUMBER`
+2. Buy a phone number with **Voice + SMS** capability (~$1.15/month)
+3. Set environment variables:
 
-Without Twilio configured, the OTP demo falls back to displaying verification codes in the response.
+```env
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_PHONE_NUMBER=+15551234567
+APP_BASE_URL=https://your-app-url.com
+```
 
-### Voice (Inbound Calling)
+### 2. Configure Webhooks in Twilio Console
 
-To allow users to call the agent by phone:
+In the [Twilio Console](https://console.twilio.com/) → Phone Numbers → your number:
 
-1. Upgrade from Twilio trial (trial has voice announcements)
-2. Buy a number with **Voice + SMS** capability (~$1.15/month)
-3. Configure the number's voice webhook:
-   - URL: `https://webex-voice-agent-studio.org/api/twilio/voice`
-   - Method: POST
-4. For local development, use ngrok:
-   ```bash
-   ngrok http 5000
-   # Then set webhook to: https://your-id.ngrok-free.app/api/twilio/voice
-   ```
+| Channel | Webhook URL | Method |
+|---------|-------------|--------|
+| **Voice** (A call comes in) | `{APP_BASE_URL}/api/twilio/voice` | POST |
+| **SMS** (A message comes in) | `{APP_BASE_URL}/api/twilio/sms` | POST |
+
+Replace `{APP_BASE_URL}` with your actual value:
+- **Replit:** `https://your-app.replit.app` or your custom domain
+- **Local development:** Use ngrok to expose your local server:
+  ```bash
+  ngrok http 5000
+  # Use the https URL ngrok gives you as APP_BASE_URL
+  ```
+
+### 3. What Each Webhook Does
+
+- **`/api/twilio/voice`** — Handles inbound phone calls. Greets the caller and records a message. Can be customized to route to an AI agent for real-time voice conversation.
+- **`/api/twilio/sms`** — Handles inbound SMS. Passes the message to the configured AI chat provider and replies with the AI response.
+- **Outbound SMS** — Used by the banking demo for OTP verification. Falls back to displaying codes in the response if Twilio is not configured.
+
+### 4. Status Check
+
+`GET /api/twilio/status` returns whether Twilio is configured and the active webhook URLs.
 
 ---
 
@@ -391,6 +412,16 @@ To allow users to call the agent by phone:
 |--------|----------|-------------|
 | `POST` | `/api/evaluations` | Save voice quality rating |
 | `GET` | `/api/evaluations/agent/:agentId` | Get ratings for agent |
+
+### Twilio (Voice & SMS)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/twilio/voice` | Inbound voice webhook (Twilio calls this) |
+| `POST` | `/api/twilio/voice/recording` | Recording callback |
+| `POST` | `/api/twilio/voice/transcription` | Transcription callback |
+| `POST` | `/api/twilio/sms` | Inbound SMS webhook (Twilio calls this) |
+| `GET` | `/api/twilio/status` | Check Twilio config and webhook URLs |
 
 ### Webex
 
