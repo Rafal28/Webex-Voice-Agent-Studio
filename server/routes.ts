@@ -133,11 +133,58 @@ function getDeepgramClient() {
 
 const ttsRequestSchema = z.object({
   text: z.string().min(1).max(4096),
-  voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]),
+  voice: z.string().min(1),
   model: z.enum(["tts-1", "tts-1-hd"]).default("tts-1"),
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+
+  // ── Provider config (dynamic LLM + voice options for frontend) ────────────
+  app.get("/api/config", (_req, res) => {
+    const llmModels = CHAT_PROVIDER === "groq"
+      ? [
+          { id: "llama-3.1-70b-versatile", name: "Llama 3.1 70B", provider: "Groq", desc: "Fast & versatile" },
+          { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B", provider: "Groq", desc: "Ultra-fast responses" },
+          { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", provider: "Groq", desc: "Large context window" },
+        ]
+      : [
+          { id: "gpt-4o", name: "GPT-4o", provider: "OpenAI", desc: "Best for reasoning & nuance" },
+          { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "OpenAI", desc: "Fast & cost-effective" },
+          { id: "gpt-4-turbo", name: "GPT-4 Turbo", provider: "OpenAI", desc: "High throughput" },
+        ];
+
+    const voices = TTS_PROVIDER === "deepgram"
+      ? [
+          { id: "aura-asteria-en", name: "Asteria", gender: "Female", style: "Warm" },
+          { id: "aura-luna-en", name: "Luna", gender: "Female", style: "Soft" },
+          { id: "aura-stella-en", name: "Stella", gender: "Female", style: "Expressive" },
+          { id: "aura-athena-en", name: "Athena", gender: "Female", style: "Professional" },
+          { id: "aura-hera-en", name: "Hera", gender: "Female", style: "Authoritative" },
+          { id: "aura-orion-en", name: "Orion", gender: "Male", style: "Deep" },
+          { id: "aura-arcas-en", name: "Arcas", gender: "Male", style: "British" },
+          { id: "aura-perseus-en", name: "Perseus", gender: "Male", style: "Authoritative" },
+          { id: "aura-angus-en", name: "Angus", gender: "Male", style: "Conversational" },
+          { id: "aura-orpheus-en", name: "Orpheus", gender: "Male", style: "Natural" },
+          { id: "aura-helios-en", name: "Helios", gender: "Male", style: "Energetic" },
+          { id: "aura-zeus-en", name: "Zeus", gender: "Male", style: "Commanding" },
+        ]
+      : [
+          { id: "alloy", name: "Alloy", gender: "Neutral", style: "Balanced" },
+          { id: "echo", name: "Echo", gender: "Male", style: "Deep" },
+          { id: "fable", name: "Fable", gender: "Male", style: "British" },
+          { id: "onyx", name: "Onyx", gender: "Male", style: "Authoritative" },
+          { id: "nova", name: "Nova", gender: "Female", style: "Energetic" },
+          { id: "shimmer", name: "Shimmer", gender: "Female", style: "Soft" },
+        ];
+
+    res.json({
+      chatProvider: CHAT_PROVIDER,
+      chatModel: CHAT_MODEL,
+      ttsProvider: TTS_PROVIDER,
+      llmModels,
+      voices,
+    });
+  });
 
   app.get("/api/deepgram/key", async (_req, res) => {
     try {
@@ -623,7 +670,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
           });
         }
 
-        const voiceModel = DEEPGRAM_VOICE_MAP[data.voice] || "aura-asteria-en";
+        const voiceModel = data.voice.startsWith("aura-") ? data.voice : (DEEPGRAM_VOICE_MAP[data.voice] || "aura-asteria-en");
         const response = await deepgram.speak.request(
           { text: data.text },
           { model: voiceModel, encoding: "mp3" }

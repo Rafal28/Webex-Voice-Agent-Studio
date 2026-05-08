@@ -63,7 +63,7 @@ export const evaluationsApi = {
 
 export interface TTSRequest {
   text: string;
-  voice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
+  voice: string;
   model?: "tts-1" | "tts-1-hd";
 }
 

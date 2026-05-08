@@ -404,7 +404,6 @@ export default function Evaluate() {
     };
   }, []);
 
-  const VALID_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
 
   const generateTTSMutation = useMutation({
     mutationFn: (data: TTSRequest) => ttsApi.generate(data),
@@ -450,8 +449,8 @@ export default function Evaluate() {
     if (!agent) return;
     
     const voice = agent.voiceModel;
-    if (!VALID_VOICES.includes(voice as any)) return;
-    
+    if (!voice) return;
+
     try {
       const response = await ttsApi.generate({
         text,
@@ -787,15 +786,15 @@ export default function Evaluate() {
     if (!agent || !inputText.trim()) return;
     
     const voice = agent.voiceModel;
-    if (!VALID_VOICES.includes(voice as any)) {
+    if (!voice) {
       toast({
-        title: "Unsupported Voice",
-        description: `The voice "${voice}" is not supported. Please select a valid voice model.`,
+        title: "No Voice Configured",
+        description: "Please select a voice model for this agent.",
         variant: "destructive",
       });
       return;
     }
-    
+
     generateTTSMutation.mutate({
       text: inputText,
       voice: voice as TTSRequest["voice"],

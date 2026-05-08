@@ -15,20 +15,12 @@ import { useToast } from "@/hooks/use-toast";
 import type { Agent, InsertAgent } from "@shared/schema";
 import heroBg from "@assets/generated_images/Abstract_sound_waves_visualization_010bae0d.png";
 
-const LLM_OPTIONS = [
+const FALLBACK_LLM_OPTIONS = [
   { value: "gpt-4o", label: "GPT-4o (OpenAI)" },
-  { value: "gpt-4", label: "GPT-4 (OpenAI)" },
-  { value: "claude-3", label: "Claude 3 (Anthropic)" },
-  { value: "gemini-pro", label: "Gemini Pro (Google)" },
 ];
 
-const VOICE_OPTIONS = [
+const FALLBACK_VOICE_OPTIONS = [
   { value: "alloy", label: "Alloy" },
-  { value: "echo", label: "Echo" },
-  { value: "fable", label: "Fable" },
-  { value: "onyx", label: "Onyx" },
-  { value: "nova", label: "Nova" },
-  { value: "shimmer", label: "Shimmer" },
 ];
 
 const LANGUAGE_OPTIONS = [
@@ -61,6 +53,17 @@ export default function Home() {
     gender: "",
   });
   
+  const { data: providerConfig } = useQuery({
+    queryKey: ["config"],
+    queryFn: async () => {
+      const res = await fetch("/api/config");
+      return res.json();
+    },
+  });
+
+  const LLM_OPTIONS = providerConfig?.llmModels?.map((m: any) => ({ value: m.id, label: `${m.name} (${m.provider})` })) || FALLBACK_LLM_OPTIONS;
+  const VOICE_OPTIONS = providerConfig?.voices?.map((v: any) => ({ value: v.id, label: v.name })) || FALLBACK_VOICE_OPTIONS;
+
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
     queryFn: agentsApi.getAll,
@@ -349,7 +352,7 @@ export default function Home() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {LLM_OPTIONS.map((opt) => (
+                    {LLM_OPTIONS.map((opt: any) => (
                       <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                     ))}
                   </SelectContent>
@@ -366,7 +369,7 @@ export default function Home() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {VOICE_OPTIONS.map((opt) => (
+                    {VOICE_OPTIONS.map((opt: any) => (
                       <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                     ))}
                   </SelectContent>

@@ -14,19 +14,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi, ttsApi, webexApi, knowledgeBaseApi, type TTSRequest, type KnowledgeBaseItem } from "@/lib/api";
 import type { InsertAgent } from "@shared/schema";
 
-const LLMS = [
-  { id: "gpt-4", name: "GPT-4o", provider: "OpenAI", desc: "Best for reasoning & nuance" },
-  { id: "claude-3", name: "Claude 3.5 Sonnet", provider: "Anthropic", desc: "Natural & human-like" },
-  { id: "gemini-1.5", name: "Gemini 1.5 Pro", provider: "Google", desc: "Fast & large context" },
+const FALLBACK_LLMS = [
+  { id: "gpt-4o", name: "GPT-4o", provider: "OpenAI", desc: "Best for reasoning & nuance" },
 ];
 
-const VOICES = [
+const FALLBACK_VOICES = [
   { id: "alloy", name: "Alloy", gender: "Neutral", style: "Balanced" },
-  { id: "echo", name: "Echo", gender: "Male", style: "Deep" },
-  { id: "fable", name: "Fable", gender: "Male", style: "British" },
-  { id: "onyx", name: "Onyx", gender: "Male", style: "Authoritative" },
-  { id: "nova", name: "Nova", gender: "Female", style: "Energetic" },
-  { id: "shimmer", name: "Shimmer", gender: "Female", style: "Soft" },
 ];
 
 const VOICE_PREVIEW_TEXT = "Hello! I'm your voice agent assistant. Let me help you with your tasks.";
@@ -548,16 +541,27 @@ export default function Build() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const { data: providerConfig } = useQuery({
+    queryKey: ["config"],
+    queryFn: async () => {
+      const res = await fetch("/api/config");
+      return res.json();
+    },
+  });
+
+  const LLMS = providerConfig?.llmModels || FALLBACK_LLMS;
+  const VOICES = providerConfig?.voices || FALLBACK_VOICES;
+
   const urlParams = new URLSearchParams(search);
   const urlAgentId = urlParams.get("agentId") ? parseInt(urlParams.get("agentId")!) : null;
-  
+
   const [buildMode, setBuildMode] = useState<'choice' | 'scratch' | 'template'>(urlAgentId ? 'scratch' : 'choice');
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
-  
+
   const [agentName, setAgentName] = useState("Agent Alpha-1");
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
-  const [selectedLLM, setSelectedLLM] = useState(LLMS[0].id);
-  const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
+  const [selectedLLM, setSelectedLLM] = useState("");
+  const [selectedVoice, setSelectedVoice] = useState("");
   const [language, setLanguage] = useState("en-US");
   const [gender, setGender] = useState("neutral");
   
@@ -641,6 +645,15 @@ export default function Build() {
     queryFn: () => agentsApi.getById(urlAgentId!),
     enabled: !!urlAgentId,
   });
+
+  useEffect(() => {
+    if (providerConfig && !selectedLLM) {
+      setSelectedLLM(providerConfig.chatModel || providerConfig.llmModels?.[0]?.id || "");
+    }
+    if (providerConfig && !selectedVoice) {
+      setSelectedVoice(providerConfig.voices?.[0]?.id || "");
+    }
+  }, [providerConfig]);
 
   useEffect(() => {
     if (existingAgent) {
@@ -813,8 +826,10 @@ export default function Build() {
     if (template) {
       setAgentName(template.config.agentName);
       setSystemPrompt(template.config.systemPrompt);
-      setSelectedLLM(template.config.llmModel);
-      setSelectedVoice(template.config.voiceModel);
+      const matchedLLM = LLMS.find((l: any) => l.id === template.config.llmModel);
+      setSelectedLLM(matchedLLM ? template.config.llmModel : LLMS[0]?.id || "");
+      const matchedVoice = VOICES.find((v: any) => v.id === template.config.voiceModel);
+      setSelectedVoice(matchedVoice ? template.config.voiceModel : VOICES[0]?.id || "");
       setLanguage(template.config.language);
       setGender(template.config.gender);
       setTools(template.config.tools);
@@ -836,9 +851,8 @@ export default function Build() {
     setSparkSuggestedIntegrations([]);
     setSparkPhase("building");
 
-    // Initialize personality attributes to Spark defaults (user can change after)
-    setSelectedLLM("gpt-4");
-    setSelectedVoice("fable");
+    setSelectedLLM(LLMS[0]?.id || "");
+    setSelectedVoice(VOICES[0]?.id || "");
     setLanguage("en-US");
     setGender("neutral");
 
@@ -861,7 +875,9 @@ export default function Build() {
       addSparkLog({ id: "prompt", status: "done", message: "System prompt written — Personality, Capabilities & Communication Style", icon: "check" });
 
       await new Promise(r => setTimeout(r, 280));
-      addSparkLog({ id: "config", status: "done", message: "Configured with GPT-4o · Fable voice · English (US)", icon: "check" });
+      const llmName = LLMS.find((l: any) => l.id === selectedLLM)?.name || selectedLLM;
+      const voiceName = VOICES.find((v: any) => v.id === selectedVoice)?.name || selectedVoice;
+      addSparkLog({ id: "config", status: "done", message: `Configured with ${llmName} · ${voiceName} voice · English (US)`, icon: "check" });
 
       await new Promise(r => setTimeout(r, 280));
       addSparkLog({ id: "webex", status: "done", message: "Webex integration enabled", icon: "check" });
@@ -1271,7 +1287,7 @@ export default function Build() {
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {LLMS.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
+                                  {LLMS.map((l: any) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
                                 </SelectContent>
                               </Select>
                             </div>
@@ -1282,7 +1298,7 @@ export default function Build() {
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {VOICES.map(v => <SelectItem key={v.id} value={v.id}>{v.name} · {v.gender}</SelectItem>)}
+                                  {VOICES.map((v: any) => <SelectItem key={v.id} value={v.id}>{v.name} · {v.gender}</SelectItem>)}
                                 </SelectContent>
                               </Select>
                             </div>
@@ -1668,13 +1684,13 @@ export default function Build() {
             </div>
 
             <div className="grid md:grid-cols-3 gap-4">
-              {LLMS.map((llm) => (
-                <div 
+              {LLMS.map((llm: any) => (
+                <div
                   key={llm.id}
                   onClick={() => setSelectedLLM(llm.id)}
                   className={`cursor-pointer relative rounded-xl border p-5 transition-all duration-200 ${
-                    selectedLLM === llm.id 
-                      ? "bg-primary/10 border-primary ring-1 ring-primary" 
+                    selectedLLM === llm.id
+                      ? "bg-primary/10 border-primary ring-1 ring-primary"
                       : "bg-card border-border hover:border-primary/50"
                   }`}
                   data-testid={`llm-card-${llm.id}`}
@@ -1752,8 +1768,8 @@ export default function Build() {
                     <span className="text-xs text-muted-foreground font-normal">Click icon to preview</span>
                  </Label>
                  <div className="grid grid-cols-2 gap-3">
-                    {VOICES.map(voice => (
-                      <div 
+                    {VOICES.map((voice: any) => (
+                      <div
                         key={voice.id}
                         onClick={() => setSelectedVoice(voice.id)}
                         className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between group transition-all ${
