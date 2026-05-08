@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
+import { VoiceAgentPanel } from "@/components/voice-agent-panel";
 
 export default function Evaluate() {
   const search = useSearch();
@@ -1185,7 +1186,18 @@ export default function Evaluate() {
            </div>
         </div>
 
-        <div className="lg:col-span-5 bg-background p-8 overflow-y-auto border-l border-white/5">
+        <div className="lg:col-span-5 bg-background overflow-y-auto border-l border-white/5 flex flex-col">
+
+           <div className="border-b border-white/10 h-[360px]">
+             <VoiceAgentPanel
+               agentId={agent.id}
+               agentName={agent.name}
+               systemPrompt={agent.systemPrompt || undefined}
+               voice={agent.voiceModel}
+             />
+           </div>
+
+           <div className="p-8">
 
            <div className="mb-8">
               <div
@@ -1353,12 +1365,13 @@ export default function Evaluate() {
                  <Card className="bg-white/5 border-white/10 p-4">
                     <h3 className="font-medium mb-2 text-sm">AI Analysis</h3>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                       The agent demonstrates high clarity but slightly monotonic intonation in this sample. 
+                       The agent demonstrates high clarity but slightly monotonic intonation in this sample.
                        Consider increasing the temperature parameter for more variability.
                     </p>
                  </Card>
               </div>
 
+           </div>
            </div>
         </div>
 

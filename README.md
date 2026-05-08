@@ -39,6 +39,7 @@ Open http://localhost:3000. That's it — Postgres, schema, and the app all star
 
 - **Agent Builder** - Create voice agents from scratch or choose from turnkey templates (Banking, IT Support, Personal OS, and more)
 - **AI Prompt Generation** - Generate and refine agent personalities using AI
+- **Real-Time Voice Calls** - Live voice conversations using OpenAI Realtime API with barge-in and VAD
 - **Voice Synthesis** - Preview agents with 6 distinct voices via OpenAI TTS
 - **Speech-to-Text** - Talk to your agent using Deepgram real-time transcription
 - **Knowledge Base** - Add URLs, upload PDFs, or write custom text to ground agent responses
@@ -252,7 +253,10 @@ After deployment, pushing to `main` on GitHub auto-redeploys.
 │   ├── index.ts            # Server entry point
 │   ├── routes.ts           # All API endpoints
 │   ├── storage.ts          # Database access layer
-│   └── vite.ts             # Vite middleware setup
+│   ├── vite.ts             # Vite middleware setup
+│   └── voice-agent/        # Real-time voice (OpenAI Realtime API)
+│       ├── index.ts        # WebSocket server + session handlers
+│       └── openai-realtime.ts  # OpenAI Realtime API client
 ├── shared/                 # Shared code (frontend + backend)
 │   └── schema.ts           # Drizzle ORM schema + Zod validation
 ├── migrations/             # Auto-generated database migrations
@@ -276,6 +280,7 @@ After deployment, pushing to `main` on GitHub auto-redeploys.
 | Database | PostgreSQL (local Docker or Neon serverless) |
 | Voice (STT) | Deepgram |
 | Voice (TTS) | OpenAI |
+| Voice (Realtime) | OpenAI Realtime API (gpt-4o-realtime-preview) |
 | LLM | OpenAI GPT-4o |
 
 ---
@@ -367,9 +372,52 @@ Replace `{APP_BASE_URL}` with your actual value:
 - **`/api/twilio/sms`** — Handles inbound SMS. Passes the message to the configured AI chat provider and replies with the AI response.
 - **Outbound SMS** — Used by the banking demo for OTP verification. Falls back to displaying codes in the response if Twilio is not configured.
 
-### 4. Status Check
+### 4. Real-Time Voice Stream (Twilio Call-In)
+
+For real-time AI voice conversations over phone (instead of the record-and-respond flow), configure:
+
+| Channel | Webhook URL | Method |
+|---------|-------------|--------|
+| **Voice** (A call comes in) | `{APP_BASE_URL}/api/twilio/voice-stream` | POST |
+
+This returns TwiML with `<Connect><Stream>` to pipe live audio into the OpenAI Realtime API. The agent uses its configured system prompt and voice. Requires `OPENAI_API_KEY`.
+
+### 5. Status Check
 
 `GET /api/twilio/status` returns whether Twilio is configured and the active webhook URLs.
+
+---
+
+## Real-Time Voice Agent
+
+The app includes a browser-based real-time voice agent powered by the **OpenAI Realtime API**. When you click "Chat" on any agent, a voice call panel appears where you can have a live conversation with the agent.
+
+### How It Works
+
+1. **Browser captures microphone** at 24kHz, encodes PCM16, sends binary frames over WebSocket
+2. **Server relays audio** to OpenAI Realtime API (`wss://api.openai.com/v1/realtime`)
+3. **OpenAI handles STT + LLM + TTS** in a single connection with built-in VAD and barge-in
+4. **Audio streams back** through the WebSocket as PCM16 binary, played via Web Audio API
+
+### Features
+
+- **Voice Activity Detection (VAD):** Automatic speech detection — no push-to-talk needed
+- **Barge-in:** Interrupt the agent mid-sentence by speaking
+- **Real-time transcription:** See both user and agent text as the conversation happens
+- **Agent personality:** Uses the agent's configured system prompt and voice
+- **Low latency:** Single WebSocket connection, no intermediate processing steps
+
+### WebSocket Endpoints
+
+| Path | Purpose |
+|------|---------|
+| `ws://host/ws/voice-agent` | Browser real-time voice (PCM16, 24kHz) |
+| `ws://host/ws/twilio-stream` | Twilio Media Streams (G.711 u-law, 8kHz) |
+
+### Requirements
+
+- `OPENAI_API_KEY` with access to `gpt-4o-realtime-preview` model
+- Browser with microphone access (HTTPS required in production)
 
 ---
 
@@ -413,11 +461,19 @@ Replace `{APP_BASE_URL}` with your actual value:
 | `POST` | `/api/evaluations` | Save voice quality rating |
 | `GET` | `/api/evaluations/agent/:agentId` | Get ratings for agent |
 
+### Real-Time Voice
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `WS` | `/ws/voice-agent` | Browser real-time voice (PCM16 binary + JSON events) |
+| `WS` | `/ws/twilio-stream` | Twilio Media Streams relay to OpenAI Realtime |
+
 ### Twilio (Voice & SMS)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/twilio/voice` | Inbound voice webhook (Twilio calls this) |
+| `POST` | `/api/twilio/voice-stream` | Real-time voice via Twilio `<Connect><Stream>` |
 | `POST` | `/api/twilio/voice/recording` | Recording callback |
 | `POST` | `/api/twilio/voice/transcription` | Transcription callback |
 | `POST` | `/api/twilio/sms` | Inbound SMS webhook (Twilio calls this) |

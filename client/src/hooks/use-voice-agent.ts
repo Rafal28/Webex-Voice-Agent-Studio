@@ -1,0 +1,172 @@
+import { useState, useRef, useCallback, useEffect } from "react";
+
+export type VoiceAgentState = "idle" | "connecting" | "listening" | "speaking";
+
+export interface TranscriptEntry {
+  role: "user" | "assistant";
+  text: string;
+  timestamp: number;
+}
+
+interface UseVoiceAgentOptions {
+  agentId?: number;
+  systemPrompt?: string;
+  voice?: string;
+}
+
+export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
+  const [state, setState] = useState<VoiceAgentState>("idle");
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [assistantPartial, setAssistantPartial] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const nextPlayTimeRef = useRef(0);
+
+  const start = useCallback(async () => {
+    try {
+      setError(null);
+      setState("connecting");
+      setTranscript([]);
+      setAssistantPartial("");
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      streamRef.current = stream;
+
+      const audioContext = new AudioContext({ sampleRate: 24000 });
+      audioContextRef.current = audioContext;
+      nextPlayTimeRef.current = audioContext.currentTime;
+
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/voice-agent`);
+      wsRef.current = ws;
+      ws.binaryType = "arraybuffer";
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          type: "start",
+          agentId: options.agentId,
+          config: { systemPrompt: options.systemPrompt, voice: options.voice },
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          playAudioChunk(event.data);
+        } else {
+          handleEvent(JSON.parse(event.data));
+        }
+      };
+
+      ws.onclose = () => {
+        setState("idle");
+        cleanup();
+      };
+
+      ws.onerror = () => {
+        setError("Connection failed. Check that OPENAI_API_KEY is configured.");
+        setState("idle");
+        cleanup();
+      };
+
+      processor.onaudioprocess = (e) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const input = e.inputBuffer.getChannelData(0);
+        const pcm16 = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        ws.send(pcm16.buffer);
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+    } catch (err: any) {
+      setError(err.message || "Failed to start voice agent");
+      setState("idle");
+    }
+  }, [options.agentId, options.systemPrompt, options.voice]);
+
+  const stop = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "stop" }));
+      wsRef.current.close();
+    }
+    cleanup();
+    setState("idle");
+  }, []);
+
+  function handleEvent(msg: any): void {
+    switch (msg.type) {
+      case "connected":
+        setState("listening");
+        break;
+      case "speechStarted":
+        setState("speaking");
+        break;
+      case "userTranscript":
+        if (msg.text) {
+          setTranscript((prev) => [...prev, { role: "user", text: msg.text, timestamp: Date.now() }]);
+        }
+        setState("listening");
+        break;
+      case "assistantTranscriptDelta":
+        setAssistantPartial((prev) => prev + msg.delta);
+        setState("speaking");
+        break;
+      case "assistantTranscriptDone":
+        setTranscript((prev) => [...prev, { role: "assistant", text: msg.text, timestamp: Date.now() }]);
+        setAssistantPartial("");
+        break;
+      case "responseDone":
+        setState("listening");
+        break;
+      case "error":
+        setError(msg.message);
+        break;
+    }
+  }
+
+  function playAudioChunk(arrayBuffer: ArrayBuffer): void {
+    if (!audioContextRef.current) return;
+    const ctx = audioContextRef.current;
+    const pcm16 = new Int16Array(arrayBuffer);
+    const float32 = new Float32Array(pcm16.length);
+    for (let i = 0; i < pcm16.length; i++) {
+      float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7fff);
+    }
+    const buffer = ctx.createBuffer(1, float32.length, 24000);
+    buffer.getChannelData(0).set(float32);
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    const startTime = Math.max(ctx.currentTime, nextPlayTimeRef.current);
+    src.start(startTime);
+    nextPlayTimeRef.current = startTime + buffer.duration;
+  }
+
+  function cleanup(): void {
+    processorRef.current?.disconnect();
+    processorRef.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    audioContextRef.current?.close();
+    audioContextRef.current = null;
+    nextPlayTimeRef.current = 0;
+    wsRef.current = null;
+  }
+
+  useEffect(() => () => cleanup(), []);
+
+  return { state, transcript, assistantPartial, error, start, stop };
+}

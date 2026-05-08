@@ -1635,6 +1635,39 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     }
   });
 
+  // ── Twilio Voice — Real-Time AI Agent (OpenAI Realtime API) ──────────────────
+  app.post("/api/twilio/voice-stream", async (req, res) => {
+    try {
+      const twilio = (await import("twilio")).default;
+      const VoiceResponse = twilio.twiml.VoiceResponse;
+      const twiml = new VoiceResponse();
+
+      const baseUrl = process.env.APP_BASE_URL;
+      if (!baseUrl) {
+        twiml.say("This service is not configured. Goodbye.");
+        twiml.hangup();
+        res.type("text/xml");
+        return res.send(twiml.toString());
+      }
+
+      const greeting = process.env.TWILIO_VOICE_GREETING;
+      if (greeting) {
+        twiml.say({ voice: "Polly.Joanna" }, greeting);
+      }
+
+      const wsUrl = baseUrl.replace(/^https?/, "wss") + "/ws/twilio-stream";
+      const connect = twiml.connect();
+      const stream = connect.stream({ url: wsUrl });
+      stream.parameter({ name: "agentId", value: req.body?.agentId || "default" });
+
+      res.type("text/xml");
+      res.send(twiml.toString());
+    } catch (error: any) {
+      console.error("Twilio voice-stream error:", error);
+      res.status(500).send("<Response><Say>An error occurred.</Say></Response>");
+    }
+  });
+
   // ── Twilio status endpoint ──────────────────────────────────────────────────
   app.get("/api/twilio/status", (_req, res) => {
     const configured = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER);
@@ -1644,6 +1677,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       baseUrl,
       webhooks: baseUrl ? {
         voice: `${baseUrl}/api/twilio/voice`,
+        voiceStream: `${baseUrl}/api/twilio/voice-stream`,
         sms: `${baseUrl}/api/twilio/sms`,
       } : null,
     });
