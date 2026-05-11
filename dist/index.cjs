@@ -1,15 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
-const distDir = join(rootDir, "dist");
-const entryPath = join(distDir, "index.cjs");
-
-mkdirSync(distDir, { recursive: true });
-writeFileSync(
-  entryPath,
-  `'use strict';
+'use strict';
 
 const { existsSync } = require('node:fs');
 const { spawnSync } = require('node:child_process');
@@ -38,5 +27,3 @@ import(pathToFileURL(serverEntry).href).catch((error) => {
   console.error(error);
   process.exit(1);
 });
-`
-);
