@@ -4,7 +4,7 @@ import * as twilio from "./twilio";
 // Combine tools from all providers that are configured
 export const realtimeTools = [
   ...(process.env.WEBEX_ACCESS_TOKEN ? webex.webexTools : []),
-  ...(process.env.TWILIO_ACCOUNT_SID ? twilio.twilioTools : []),
+  ...(twilio.isSmsConfigured() ? twilio.twilioTools : []),
 ];
 
 // Map for chat completion format

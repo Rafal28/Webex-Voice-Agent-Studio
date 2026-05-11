@@ -20,16 +20,31 @@ export const twilioTools = [
   },
 ];
 
+export function isSmsConfigured(): boolean {
+  return Boolean(
+    process.env.TWILIO_ACCOUNT_SID &&
+    process.env.TWILIO_AUTH_TOKEN &&
+    (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID)
+  );
+}
+
 export async function sms(args: Record<string, any>): Promise<{ success: boolean; result?: string; error?: string }> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromPhone = process.env.TWILIO_PHONE_NUMBER;
+  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
 
-  if (!accountSid || !authToken || !fromPhone) {
+  if (!accountSid || !authToken || (!fromPhone && !messagingServiceSid)) {
     return { success: false, error: "Twilio credentials are not configured" };
   }
 
   const { to, body } = args;
+  if (typeof to !== "string" || !to.trim()) {
+    return { success: false, error: "SMS destination phone number is required" };
+  }
+  if (typeof body !== "string" || !body.trim()) {
+    return { success: false, error: "SMS body is required" };
+  }
 
   try {
     console.log(`Sending Twilio SMS to ${to}...`);
@@ -40,7 +55,7 @@ export async function sms(args: Record<string, any>): Promise<{ success: boolean
     
     const message = await client.messages.create({
       body,
-      from: fromPhone,
+      ...(messagingServiceSid ? { messagingServiceSid } : { from: fromPhone }),
       to,
     });
 

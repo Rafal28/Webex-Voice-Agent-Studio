@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil } from "lucide-react";
+import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, User, Globe, Cpu, MessageSquare, Pencil, PhoneCall } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { agentsApi } from "@/lib/api";
@@ -291,6 +291,17 @@ export default function Home() {
                         >
                           <Mic className="w-4 h-4" />
                           Chat
+                        </Button>
+                      </Link>
+                      <Link href={`/pstn-call?agentId=${agent.id}`}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2 border-green-500/30 text-green-300"
+                          data-testid={`button-pstn-call-agent-${agent.id}`}
+                        >
+                          <PhoneCall className="w-4 h-4" />
+                          Call
                         </Button>
                       </Link>
                       <Button 

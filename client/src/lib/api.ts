@@ -313,6 +313,27 @@ export const anamApi = {
   },
 };
 
+export interface TwilioStatus {
+  configured: boolean;
+  voiceConfigured: boolean;
+  smsConfigured: boolean;
+  baseUrl: string | null;
+  phoneNumber: string | null;
+  webhooks: {
+    voice: string;
+    voiceStream: string;
+    sms: string;
+  } | null;
+}
+
+export const twilioApi = {
+  getStatus: async (): Promise<TwilioStatus> => {
+    const res = await fetch(`${API_BASE}/twilio/status`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+};
+
 export const ocrApi = {
   extractText: async (imageDataUrl: string): Promise<{ text: string }> => {
     const res = await fetch(`${API_BASE}/ocr`, {

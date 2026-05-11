@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request as ExpressRequest, Response as ExpressResponse } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertAgentSchema, insertEvaluationSchema } from "@shared/schema";
@@ -1437,21 +1437,49 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   });
 
   // ── Twilio Voice (inbound calls) ──────────────────────────────────────────
-  app.post("/api/twilio/voice", async (req, res) => {
+  function getPublicBaseUrl(req: ExpressRequest): string | null {
+    const configuredBaseUrl = process.env.APP_BASE_URL?.trim().replace(/\/+$/, "");
+    if (configuredBaseUrl) return configuredBaseUrl;
+
+    const forwardedProto = req.headers["x-forwarded-proto"];
+    const forwardedHost = req.headers["x-forwarded-host"];
+    const proto = Array.isArray(forwardedProto)
+      ? forwardedProto[0]
+      : forwardedProto?.split(",")[0]?.trim() || req.protocol;
+    const host = Array.isArray(forwardedHost)
+      ? forwardedHost[0]
+      : forwardedHost?.split(",")[0]?.trim() || req.headers.host;
+
+    return host ? `${proto || "https"}://${host}` : null;
+  }
+
+  function getTwilioAgentId(req: ExpressRequest): string {
+    const queryAgentId = Array.isArray(req.query?.agentId) ? req.query.agentId[0] : req.query?.agentId;
+    return String(req.body?.agentId || queryAgentId || "default");
+  }
+
+  function getTwilioCallerPhone(req: ExpressRequest): string | null {
+    const queryFrom = Array.isArray(req.query?.From) ? req.query.From[0] : req.query?.From;
+    const callerPhone = req.body?.From || queryFrom;
+    return typeof callerPhone === "string" && callerPhone.trim() ? callerPhone.trim() : null;
+  }
+
+  async function handleTwilioVoiceWebhook(req: ExpressRequest, res: ExpressResponse): Promise<void> {
     try {
       const twilio = (await import("twilio")).default;
       const VoiceResponse = twilio.twiml.VoiceResponse;
       const twiml = new VoiceResponse();
 
-      const baseUrl = process.env.APP_BASE_URL;
+      const baseUrl = getPublicBaseUrl(req);
       if (!baseUrl) {
         twiml.say("This service is not configured. Goodbye.");
         twiml.hangup();
         res.type("text/xml");
-        return res.send(twiml.toString());
+        res.send(twiml.toString());
+        return;
       }
 
-      const greeting = process.env.TWILIO_VOICE_GREETING;
+      const greeting = process.env.TWILIO_PRECONNECT_GREETING;
       if (greeting) {
         twiml.say({ voice: "Polly.Joanna" }, greeting);
       }
@@ -1459,9 +1487,10 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       const wsUrl = baseUrl.replace(/^https?/, "wss") + "/ws/twilio-stream";
       const connect = twiml.connect();
       const stream = connect.stream({ url: wsUrl });
-      stream.parameter({ name: "agentId", value: req.body?.agentId || "default" });
-      if (req.body?.From) {
-        stream.parameter({ name: "callerPhone", value: req.body.From });
+      stream.parameter({ name: "agentId", value: getTwilioAgentId(req) });
+      const callerPhone = getTwilioCallerPhone(req);
+      if (callerPhone) {
+        stream.parameter({ name: "callerPhone", value: callerPhone });
       }
 
       res.type("text/xml");
@@ -1470,7 +1499,9 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       console.error("Twilio voice webhook error:", error);
       res.status(500).send("<Response><Say>An error occurred.</Say></Response>");
     }
-  });
+  }
+
+  app.all("/api/twilio/voice", handleTwilioVoiceWebhook);
 
   app.post("/api/twilio/voice/recording", async (req, res) => {
     const twilio = (await import("twilio")).default;
@@ -1532,48 +1563,24 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   });
 
   // ── Twilio Voice — Real-Time AI Agent (OpenAI Realtime API) ──────────────────
-  app.post("/api/twilio/voice-stream", async (req, res) => {
-    try {
-      const twilio = (await import("twilio")).default;
-      const VoiceResponse = twilio.twiml.VoiceResponse;
-      const twiml = new VoiceResponse();
-
-      const baseUrl = process.env.APP_BASE_URL;
-      if (!baseUrl) {
-        twiml.say("This service is not configured. Goodbye.");
-        twiml.hangup();
-        res.type("text/xml");
-        return res.send(twiml.toString());
-      }
-
-      const greeting = process.env.TWILIO_VOICE_GREETING;
-      if (greeting) {
-        twiml.say({ voice: "Polly.Joanna" }, greeting);
-      }
-
-      const wsUrl = baseUrl.replace(/^https?/, "wss") + "/ws/twilio-stream";
-      const connect = twiml.connect();
-      const stream = connect.stream({ url: wsUrl });
-      stream.parameter({ name: "agentId", value: req.body?.agentId || "default" });
-      if (req.body?.From) {
-        stream.parameter({ name: "callerPhone", value: req.body.From });
-      }
-
-      res.type("text/xml");
-      res.send(twiml.toString());
-    } catch (error: any) {
-      console.error("Twilio voice-stream error:", error);
-      res.status(500).send("<Response><Say>An error occurred.</Say></Response>");
-    }
-  });
+  app.all("/api/twilio/voice-stream", handleTwilioVoiceWebhook);
 
   // ── Twilio status endpoint ──────────────────────────────────────────────────
-  app.get("/api/twilio/status", (_req, res) => {
-    const configured = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER);
-    const baseUrl = process.env.APP_BASE_URL || null;
+  app.get("/api/twilio/status", (req, res) => {
+    const smsConfigured = !!(
+      process.env.TWILIO_ACCOUNT_SID &&
+      process.env.TWILIO_AUTH_TOKEN &&
+      (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID)
+    );
+    const baseUrl = getPublicBaseUrl(req);
+    const phoneNumber = process.env.TWILIO_PHONE_NUMBER || null;
+    const voiceConfigured = Boolean(baseUrl);
     res.json({
-      configured,
+      configured: voiceConfigured && !!phoneNumber,
+      voiceConfigured,
+      smsConfigured,
       baseUrl,
+      phoneNumber,
       webhooks: baseUrl ? {
         voice: `${baseUrl}/api/twilio/voice`,
         voiceStream: `${baseUrl}/api/twilio/voice-stream`,
