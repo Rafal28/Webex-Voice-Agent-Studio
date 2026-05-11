@@ -1,10 +1,10 @@
 import * as webex from "./webex";
-// Add future imports here, e.g., import * as twilio from "./twilio";
+import * as twilio from "./twilio";
 
 // Combine tools from all providers that are configured
 export const realtimeTools = [
   ...(process.env.WEBEX_ACCESS_TOKEN ? webex.webexTools : []),
-  // ...twilioTools,
+  ...(process.env.TWILIO_ACCOUNT_SID ? twilio.twilioTools : []),
 ];
 
 // Map for chat completion format
@@ -19,7 +19,7 @@ export const chatTools: any[] = realtimeTools.map(t => ({
 
 const providers: Record<string, any> = {
   webex,
-  // twilio,
+  twilio,
 };
 
 export async function executeTool(
