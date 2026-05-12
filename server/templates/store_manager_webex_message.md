@@ -23,7 +23,7 @@
 {{recommended_next_step}}
 
 <details>
-<summary>📋 Full Transcript</summary>
+<summary>📋 Call Transcript Summary</summary>
 
 {{transcript}}
 

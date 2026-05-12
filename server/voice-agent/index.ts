@@ -1121,6 +1121,9 @@ function handleBrowserSession(ws: WebSocket): void {
   let lastUserTranscript = "";
   let suppressAssistantOutput = false;
   let assistantTranscriptGuard = "";
+  let browserCallStartedAt: number | null = null;
+  let browserCallEndedSent = false;
+  const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw, isBinary) => {
     if (isBinary && openai) {
@@ -1143,6 +1146,9 @@ function handleBrowserSession(ws: WebSocket): void {
         agentName = "Store Assistant";
         lastAssistantTranscript = "";
         lastUserTranscript = "";
+        browserCallStartedAt = Date.now();
+        browserCallEndedSent = false;
+        transcriptEntries.length = 0;
 
         if (agentId) {
           const agent = await storage.getAgent(parseInt(agentId));
@@ -1287,6 +1293,11 @@ function handleBrowserSession(ws: WebSocket): void {
 
           acceptedUserTranscriptCount++;
           lastUserTranscript = reviewed.text;
+          transcriptEntries.push({
+            role: "Customer",
+            text: reviewed.text,
+            timestamp: Date.now(),
+          });
           sendEvent({
             type: "userTranscript",
             text: reviewed.text,
@@ -1334,6 +1345,11 @@ function handleBrowserSession(ws: WebSocket): void {
           }
           lastAssistantDoneAt = Date.now();
           lastAssistantTranscript = trimmed;
+          transcriptEntries.push({
+            role: "Assistant",
+            text: trimmed,
+            timestamp: Date.now(),
+          });
           sendEvent({ type: "assistantTranscriptDone", text: trimmed });
         });
 
@@ -1425,6 +1441,7 @@ function handleBrowserSession(ws: WebSocket): void {
         openai.connect();
         sendEvent({ type: "connected" });
       } else if (msg.type === "stop") {
+        sendBrowserCallEnded("Browser voice session stopped");
         openai?.close();
         openai = null;
       } else if (msg.type === "assistantPlaybackStarted") {
@@ -1452,6 +1469,7 @@ function handleBrowserSession(ws: WebSocket): void {
       clearTimeout(initialGreetingReleaseTimer);
       initialGreetingReleaseTimer = null;
     }
+    sendBrowserCallEnded("Browser voice websocket closed");
     openai?.close();
     openai = null;
   });
@@ -1494,7 +1512,7 @@ function handleBrowserSession(ws: WebSocket): void {
       endCallTimer = null;
     }
 
-    sendEvent({ type: "callEnded", reason, timestamp: Date.now() });
+    sendBrowserCallEnded(reason);
     openai?.close();
     openai = null;
     setTimeout(() => {
@@ -1502,6 +1520,43 @@ function handleBrowserSession(ws: WebSocket): void {
         ws.close();
       }
     }, 50);
+  }
+
+  function sendBrowserCallEnded(reason: string): void {
+    if (browserCallEndedSent) return;
+    browserCallEndedSent = true;
+    const endedAt = Date.now();
+    sendEvent({ type: "callEnded", reason, timestamp: endedAt });
+    void sendBrowserStoreManagerWebexSummary(endedAt);
+  }
+
+  async function sendBrowserStoreManagerWebexSummary(endedAt: number): Promise<void> {
+    try {
+      const transcript = formatTranscript(transcriptEntries);
+      const summary = await summarizeCallForStoreManager(transcript);
+      const message = renderTemplate(STORE_MANAGER_WEBEX_TEMPLATE, {
+        customer_name: summary.customer_name,
+        phone_number: "Browser voice session",
+        call_duration: formatCallDuration(browserCallStartedAt, endedAt),
+        final_resolution: summary.final_resolution,
+        summary: summary.summary,
+        customer_intent: summary.customer_intent,
+        products_discussed: summary.products_discussed,
+        customer_preferences: summary.customer_preferences,
+        store_actions: summary.store_actions,
+        recommended_next_step: summary.recommended_next_step,
+        transcript,
+      });
+
+      const result = await executeTool("webex_message", { message });
+      if (result.success) {
+        console.log("[VoiceAgent/Browser] Store manager Webex summary sent");
+      } else {
+        console.error("[VoiceAgent/Browser] Store manager Webex summary failed:", result.error);
+      }
+    } catch (error: any) {
+      console.error("[VoiceAgent/Browser] Store manager Webex summary error:", error.message);
+    }
   }
 
   function suppressBrowserAssistantResponse(reason: string): void {
