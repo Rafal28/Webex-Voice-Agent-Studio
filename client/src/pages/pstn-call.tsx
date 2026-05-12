@@ -225,11 +225,13 @@ export default function PstnCall() {
               </div>
             </div>
 
-            <div className="grid gap-3 lg:min-w-[760px] lg:grid-cols-[minmax(210px,0.8fr)_minmax(0,1.6fr)_minmax(210px,0.8fr)]">
+            <div className="grid gap-3 lg:min-w-[860px] lg:grid-cols-[minmax(270px,0.9fr)_minmax(0,1.5fr)_minmax(220px,0.8fr)]">
               <InfoRow
+                className="min-w-[270px]"
                 icon={<PhoneCall className="w-4 h-4" />}
                 label="Twilio number"
                 value={twilioStatus?.phoneNumber || "Set TWILIO_PHONE_NUMBER"}
+                valueDisplay="nowrap"
                 action={
                   twilioStatus?.phoneNumber ? (
                     <Button asChild size="sm" className="bg-green-600 hover:bg-green-700 text-white">
@@ -243,7 +245,7 @@ export default function PstnCall() {
                 icon={<Settings className="w-4 h-4" />}
                 label="Voice webhook"
                 value={agentWebhookUrl || "Set APP_BASE_URL"}
-                wrapValue
+                valueDisplay="wrap"
                 action={
                   agentWebhookUrl ? (
                     <Button
@@ -328,33 +330,35 @@ export default function PstnCall() {
 
 function InfoRow({
   action,
+  className,
   icon,
   label,
-  wrapValue = false,
   value,
+  valueDisplay = "truncate",
 }: {
   action?: ReactNode;
+  className?: string;
   icon: ReactNode;
   label: string;
-  wrapValue?: boolean;
   value: string;
+  valueDisplay?: "truncate" | "wrap" | "nowrap";
 }) {
+  const valueClassName = {
+    truncate: "truncate text-sm font-medium",
+    wrap: "mt-1 whitespace-normal break-all font-mono text-[12px] leading-relaxed text-foreground",
+    nowrap: "whitespace-nowrap text-sm font-medium tabular-nums",
+  }[valueDisplay];
+
   return (
-    <div className="flex items-start gap-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
+    <div className={`flex items-start gap-3 rounded-md border border-white/10 bg-white/[0.03] p-3 ${className || ""}`}>
       <div className="mt-1 text-muted-foreground">{icon}</div>
       <div className="min-w-0 flex-1">
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div
-          className={
-            wrapValue
-              ? "mt-1 whitespace-normal break-all font-mono text-[12px] leading-relaxed text-foreground"
-              : "truncate text-sm font-medium"
-          }
-        >
+        <div className={valueClassName}>
           {value}
         </div>
       </div>
-      {action}
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }
