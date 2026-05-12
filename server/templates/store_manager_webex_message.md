@@ -1,0 +1,30 @@
+<h3>📞 Customer Call Handoff</h3>
+
+🧑 **Name:** {{customer_name}}  
+☎️ **Phone:** {{phone_number}}  
+⏱️ **Duration:** {{call_duration}}  
+✅ **Outcome:** {{final_resolution}}  
+
+---
+
+<h4>📝 What Happened</h4>
+
+{{summary}}
+
+<h4>🎯 Important Details</h4>
+
+🔎 **Intent:** {{customer_intent}}  
+🛍️ **Products Discussed:** {{products_discussed}}  
+💡 **Preferences:** {{customer_preferences}}  
+🏬 **Store Actions:** {{store_actions}}  
+
+<h4>➡️ Recommended Next Step</h4>
+
+{{recommended_next_step}}
+
+<details>
+<summary>📋 Call Transcript Summary</summary>
+
+{{transcript}}
+
+</details>

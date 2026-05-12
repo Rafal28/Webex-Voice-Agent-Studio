@@ -1,5 +1,8 @@
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
+import * as fs from "fs";
+import * as path from "path";
+import OpenAI from "openai";
 import { OpenAIRealtimeClient, RealtimeSessionConfig } from "./openai-realtime";
 import { storage } from "../storage";
 import { realtimeTools, executeTool } from "../tools";
@@ -108,6 +111,24 @@ const VOICE_END_CALL_TOOL = {
 };
 
 const SMS_SUMMARY_MAX_CHARS = 1200;
+const STORE_MANAGER_WEBEX_TEMPLATE = "store_manager_webex_message";
+
+interface CallTranscriptEntry {
+  role: "Customer" | "Assistant";
+  text: string;
+  timestamp: number;
+}
+
+interface StoreManagerCallSummary {
+  customer_name: string;
+  final_resolution: string;
+  summary: string;
+  customer_intent: string;
+  products_discussed: string;
+  customer_preferences: string;
+  store_actions: string;
+  recommended_next_step: string;
+}
 
 function normalizeTranscript(text: string): string {
   return text.trim().toLowerCase().replace(/[.!?,\s]+$/g, "");
@@ -125,6 +146,92 @@ function truncateForSms(text: string, maxLength = SMS_SUMMARY_MAX_CHARS): string
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (cleaned.length <= maxLength) return cleaned;
   return cleaned.slice(0, maxLength - 3).trimEnd() + "...";
+}
+
+function formatCallDuration(startedAt: number | null, endedAt: number): string {
+  if (!startedAt) return "Unknown";
+  const totalSeconds = Math.max(0, Math.round((endedAt - startedAt) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatTranscript(entries: CallTranscriptEntry[]): string {
+  if (entries.length === 0) return "No transcript was captured.";
+  return entries
+    .map((entry) => `**${entry.role}:** ${entry.text}`)
+    .join("\n\n");
+}
+
+function renderTemplate(templateName: string, values: Record<string, string>): string {
+  const templatePath = path.resolve(process.cwd(), "server", "templates", `${templateName}.md`);
+  const template = fs.readFileSync(templatePath, "utf8");
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => values[key] ?? "");
+}
+
+function getOpenAIClient(): OpenAI | null {
+  if (!process.env.OPENAI_API_KEY) return null;
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
+
+function fallbackStoreManagerSummary(transcriptText: string): StoreManagerCallSummary {
+  return {
+    customer_name: "Unknown",
+    final_resolution: "Review needed",
+    summary: transcriptText ? "A customer call was completed. Review the transcript for details." : "A customer call ended without a captured transcript.",
+    customer_intent: "Review transcript",
+    products_discussed: "Not specified",
+    customer_preferences: "Not specified",
+    store_actions: "Review needed",
+    recommended_next_step: "Review the transcript and follow up with the customer if needed.",
+  };
+}
+
+async function summarizeCallForStoreManager(transcriptText: string): Promise<StoreManagerCallSummary> {
+  const client = getOpenAIClient();
+  if (!client || !transcriptText.trim()) {
+    return fallbackStoreManagerSummary(transcriptText);
+  }
+
+  try {
+    const response = await client.chat.completions.create({
+      model: process.env.CHAT_MODEL?.trim() || "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You summarize retail store assistant phone calls for store managers.",
+            "Return only valid compact JSON with these keys:",
+            "customer_name, final_resolution, summary, customer_intent, products_discussed, customer_preferences, store_actions, recommended_next_step.",
+            "Use Unknown or Not specified when the transcript does not contain a value.",
+          ].join(" "),
+        },
+        {
+          role: "user",
+          content: `Transcript:\n${transcriptText}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+      max_tokens: 800,
+    });
+
+    const content = response.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(content) as Partial<StoreManagerCallSummary>;
+    return {
+      customer_name: parsed.customer_name || "Unknown",
+      final_resolution: parsed.final_resolution || "Review needed",
+      summary: parsed.summary || "Review the transcript for call details.",
+      customer_intent: parsed.customer_intent || "Not specified",
+      products_discussed: parsed.products_discussed || "Not specified",
+      customer_preferences: parsed.customer_preferences || "Not specified",
+      store_actions: parsed.store_actions || "Not specified",
+      recommended_next_step: parsed.recommended_next_step || "Review the transcript and follow up if needed.",
+    };
+  } catch (error: any) {
+    console.error("[VoiceAgent/Twilio] Store manager summary failed:", error.message);
+    return fallbackStoreManagerSummary(transcriptText);
+  }
 }
 
 function buildTwilioCallInstructions(baseInstructions: string, callerPhone: string, canSendSmsToCaller: boolean): string {
@@ -566,6 +673,10 @@ function handleTwilioSession(ws: WebSocket): void {
   let responseStartTs: number | null = null;
   let latestTs = 0;
   let markQueue: string[] = [];
+  let callStartedAt: number | null = null;
+  let callSid: string | undefined;
+  let callerPhone = "Unknown";
+  const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
     const msg = JSON.parse(raw.toString());
@@ -576,7 +687,8 @@ function handleTwilioSession(ws: WebSocket): void {
         const params = msg.start.customParameters || {};
         const agentId = normalizeTwilioAgentId(params.agentId);
         monitorAgentId = agentId;
-        const callSid = msg.start.callSid;
+        callStartedAt = Date.now();
+        callSid = msg.start.callSid;
         activeCallSid = typeof callSid === "string" ? callSid : null;
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
@@ -585,8 +697,10 @@ function handleTwilioSession(ws: WebSocket): void {
         agentName = "Store Assistant";
         lastAssistantTranscript = "";
         lastUserTranscript = "";
-        const callerPhone = typeof params.callerPhone === "string" ? params.callerPhone : "";
-        const canSendSmsToCaller = Boolean(callerPhone && isTwilioSmsConfigured());
+        callerPhone = typeof params.callerPhone === "string" && params.callerPhone.trim()
+          ? params.callerPhone.trim()
+          : "Unknown";
+        const canSendSmsToCaller = callerPhone !== "Unknown" && isTwilioSmsConfigured();
 
         if (agentId && agentId !== "default") {
           const agent = await storage.getAgent(parseInt(agentId));
@@ -602,7 +716,7 @@ function handleTwilioSession(ws: WebSocket): void {
         instructions = buildTwilioCallInstructions(instructions, callerPhone, canSendSmsToCaller);
 
         const tools = [
-          ...realtimeTools.filter((tool) => !(callerPhone && tool.name === "twilio_sms")),
+          ...realtimeTools.filter((tool) => !(callerPhone !== "Unknown" && tool.name === "twilio_sms")),
           ...(canSendSmsToCaller ? [TWILIO_CALLER_SUMMARY_TOOL] : []),
           VOICE_END_CALL_TOOL,
         ];
@@ -691,6 +805,11 @@ function handleTwilioSession(ws: WebSocket): void {
           }
 
           lastUserTranscript = reviewed.text;
+          transcriptEntries.push({
+            role: "Customer",
+            text: reviewed.text,
+            timestamp: Date.now(),
+          });
           sendTwilioMonitorEvent(monitorAgentId, {
             type: "userTranscript",
             agentId: monitorAgentId,
@@ -729,6 +848,11 @@ function handleTwilioSession(ws: WebSocket): void {
           }
           if (trimmed) {
             lastAssistantTranscript = trimmed;
+            transcriptEntries.push({
+              role: "Assistant",
+              text: trimmed,
+              timestamp: Date.now(),
+            });
             sendTwilioMonitorEvent(monitorAgentId, {
               type: "assistantTranscript",
               agentId: monitorAgentId,
@@ -827,11 +951,42 @@ function handleTwilioSession(ws: WebSocket): void {
   function sendCallEnded(): void {
     if (callEndedSent) return;
     callEndedSent = true;
+    const endedAt = Date.now();
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "callEnded",
       agentId: monitorAgentId,
-      timestamp: Date.now(),
+      timestamp: endedAt,
     });
+    void sendStoreManagerWebexSummary(endedAt);
+  }
+
+  async function sendStoreManagerWebexSummary(endedAt: number): Promise<void> {
+    try {
+      const transcript = formatTranscript(transcriptEntries);
+      const summary = await summarizeCallForStoreManager(transcript);
+      const message = renderTemplate(STORE_MANAGER_WEBEX_TEMPLATE, {
+        customer_name: summary.customer_name,
+        phone_number: callerPhone,
+        call_duration: formatCallDuration(callStartedAt, endedAt),
+        final_resolution: summary.final_resolution,
+        summary: summary.summary,
+        customer_intent: summary.customer_intent,
+        products_discussed: summary.products_discussed,
+        customer_preferences: summary.customer_preferences,
+        store_actions: summary.store_actions,
+        recommended_next_step: summary.recommended_next_step,
+        transcript,
+      });
+
+      const result = await executeTool("webex_message", { message });
+      if (result.success) {
+        console.log("[VoiceAgent/Twilio] Store manager Webex summary sent", { callSid });
+      } else {
+        console.error("[VoiceAgent/Twilio] Store manager Webex summary failed:", result.error);
+      }
+    } catch (error: any) {
+      console.error("[VoiceAgent/Twilio] Store manager Webex summary error:", error.message);
+    }
   }
 
   function suppressTwilioAssistantResponse(reason: string): void {
@@ -966,6 +1121,9 @@ function handleBrowserSession(ws: WebSocket): void {
   let lastUserTranscript = "";
   let suppressAssistantOutput = false;
   let assistantTranscriptGuard = "";
+  let browserCallStartedAt: number | null = null;
+  let browserCallEndedSent = false;
+  const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw, isBinary) => {
     if (isBinary && openai) {
@@ -988,6 +1146,9 @@ function handleBrowserSession(ws: WebSocket): void {
         agentName = "Store Assistant";
         lastAssistantTranscript = "";
         lastUserTranscript = "";
+        browserCallStartedAt = Date.now();
+        browserCallEndedSent = false;
+        transcriptEntries.length = 0;
 
         if (agentId) {
           const agent = await storage.getAgent(parseInt(agentId));
@@ -1132,6 +1293,11 @@ function handleBrowserSession(ws: WebSocket): void {
 
           acceptedUserTranscriptCount++;
           lastUserTranscript = reviewed.text;
+          transcriptEntries.push({
+            role: "Customer",
+            text: reviewed.text,
+            timestamp: Date.now(),
+          });
           sendEvent({
             type: "userTranscript",
             text: reviewed.text,
@@ -1179,6 +1345,11 @@ function handleBrowserSession(ws: WebSocket): void {
           }
           lastAssistantDoneAt = Date.now();
           lastAssistantTranscript = trimmed;
+          transcriptEntries.push({
+            role: "Assistant",
+            text: trimmed,
+            timestamp: Date.now(),
+          });
           sendEvent({ type: "assistantTranscriptDone", text: trimmed });
         });
 
@@ -1270,6 +1441,7 @@ function handleBrowserSession(ws: WebSocket): void {
         openai.connect();
         sendEvent({ type: "connected" });
       } else if (msg.type === "stop") {
+        sendBrowserCallEnded("Browser voice session stopped");
         openai?.close();
         openai = null;
       } else if (msg.type === "assistantPlaybackStarted") {
@@ -1297,6 +1469,7 @@ function handleBrowserSession(ws: WebSocket): void {
       clearTimeout(initialGreetingReleaseTimer);
       initialGreetingReleaseTimer = null;
     }
+    sendBrowserCallEnded("Browser voice websocket closed");
     openai?.close();
     openai = null;
   });
@@ -1339,7 +1512,7 @@ function handleBrowserSession(ws: WebSocket): void {
       endCallTimer = null;
     }
 
-    sendEvent({ type: "callEnded", reason, timestamp: Date.now() });
+    sendBrowserCallEnded(reason);
     openai?.close();
     openai = null;
     setTimeout(() => {
@@ -1347,6 +1520,43 @@ function handleBrowserSession(ws: WebSocket): void {
         ws.close();
       }
     }, 50);
+  }
+
+  function sendBrowserCallEnded(reason: string): void {
+    if (browserCallEndedSent) return;
+    browserCallEndedSent = true;
+    const endedAt = Date.now();
+    sendEvent({ type: "callEnded", reason, timestamp: endedAt });
+    void sendBrowserStoreManagerWebexSummary(endedAt);
+  }
+
+  async function sendBrowserStoreManagerWebexSummary(endedAt: number): Promise<void> {
+    try {
+      const transcript = formatTranscript(transcriptEntries);
+      const summary = await summarizeCallForStoreManager(transcript);
+      const message = renderTemplate(STORE_MANAGER_WEBEX_TEMPLATE, {
+        customer_name: summary.customer_name,
+        phone_number: "Browser voice session",
+        call_duration: formatCallDuration(browserCallStartedAt, endedAt),
+        final_resolution: summary.final_resolution,
+        summary: summary.summary,
+        customer_intent: summary.customer_intent,
+        products_discussed: summary.products_discussed,
+        customer_preferences: summary.customer_preferences,
+        store_actions: summary.store_actions,
+        recommended_next_step: summary.recommended_next_step,
+        transcript,
+      });
+
+      const result = await executeTool("webex_message", { message });
+      if (result.success) {
+        console.log("[VoiceAgent/Browser] Store manager Webex summary sent");
+      } else {
+        console.error("[VoiceAgent/Browser] Store manager Webex summary failed:", result.error);
+      }
+    } catch (error: any) {
+      console.error("[VoiceAgent/Browser] Store manager Webex summary error:", error.message);
+    }
   }
 
   function suppressBrowserAssistantResponse(reason: string): void {

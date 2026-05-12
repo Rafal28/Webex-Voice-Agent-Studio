@@ -8,6 +8,7 @@ import Home from "@/pages/home";
 import Build from "@/pages/build";
 import Evaluate from "@/pages/evaluate";
 import PstnCall from "@/pages/pstn-call";
+import { UserProfile } from "@/components/user-profile";
 
 function Router() {
   return (
@@ -26,6 +27,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
+        <UserProfile />
         <Router />
       </TooltipProvider>
     </QueryClientProvider>
