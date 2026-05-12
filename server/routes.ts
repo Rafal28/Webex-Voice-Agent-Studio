@@ -13,6 +13,7 @@ import { createClient } from "@deepgram/sdk";
 import { chatTools, executeTool } from "./tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { isRetailStoreUseCasePrompt } from "@shared/use-cases";
+import { getWebexProfile, updateWebexProfile } from "./webex-profile";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -793,13 +794,45 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     try {
       const rooms = await storage.getAllWebexRooms();
       const messageCount = await storage.getWebexMessageCount();
+      const webexProfile = getWebexProfile();
       res.json({
         roomCount: rooms.length,
         messageCount,
-        hasToken: !!process.env.WEBEX_ACCESS_TOKEN,
+        hasToken: !!webexProfile.bearerToken,
+        hasDefaultSpace: !!webexProfile.webexSpaceId,
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch Webex stats" });
+    }
+  });
+
+  const webexProfileSchema = z.object({
+    bearerToken: z.string().optional(),
+    webexSpaceId: z.string().optional(),
+  });
+
+  app.get("/api/webex/profile", async (_req, res) => {
+    const profile = getWebexProfile();
+    res.json({
+      hasBearerToken: !!profile.bearerToken,
+      webexSpaceId: profile.webexSpaceId || "",
+    });
+  });
+
+  app.put("/api/webex/profile", async (req, res) => {
+    try {
+      const data = webexProfileSchema.parse(req.body || {});
+      const profile = updateWebexProfile(data);
+      res.json({
+        success: true,
+        hasBearerToken: !!profile.bearerToken,
+        webexSpaceId: profile.webexSpaceId || "",
+      });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: fromError(error).toString() });
+      }
+      res.status(500).json({ error: error.message || "Failed to save Webex profile" });
     }
   });
 
@@ -821,7 +854,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   app.post("/api/webex/sync", async (req, res) => {
     try {
-      const token = process.env.WEBEX_ACCESS_TOKEN;
+      const token = getWebexProfile().bearerToken;
       if (!token) {
         return res.status(503).json({ 
           error: "Webex is not configured. Please add your Webex access token." 
@@ -896,7 +929,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   });
 
   const sendMessageSchema = z.object({
-    roomId: z.string().min(1),
+    roomId: z.string().optional(),
     text: z.string().optional(),
     markdown: z.string().optional(),
   }).refine(data => data.text || data.markdown, {
@@ -905,7 +938,8 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   app.post("/api/webex/messages", async (req, res) => {
     try {
-      const token = process.env.WEBEX_ACCESS_TOKEN;
+      const webexProfile = getWebexProfile();
+      const token = webexProfile.bearerToken;
       if (!token) {
         return res.status(503).json({ 
           error: "Webex is not configured. Please add your Webex access token." 
@@ -913,6 +947,12 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       }
 
       const data = sendMessageSchema.parse(req.body);
+      const roomId = data.roomId || webexProfile.webexSpaceId;
+      if (!roomId) {
+        return res.status(400).json({
+          error: "No Webex space configured. Please set a WebexSpaceId in your profile.",
+        });
+      }
 
       const response = await fetch('https://webexapis.com/v1/messages', {
         method: 'POST',
@@ -921,7 +961,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
           'Content-Type': 'application/json; charset=utf-8',
         },
         body: JSON.stringify({
-          roomId: data.roomId,
+          roomId,
           ...(data.markdown ? { markdown: data.markdown } : { text: data.text }),
         }),
       });
@@ -1366,7 +1406,8 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         content: data.message,
       });
       
-      const hasWebex = !!process.env.WEBEX_ACCESS_TOKEN && webexRooms.length > 0;
+      const webexProfile = getWebexProfile();
+      const hasWebex = !!webexProfile.bearerToken && (webexRooms.length > 0 || !!webexProfile.webexSpaceId);
       const bankingFunctionNames = ["lookup_customer", "send_verification_code", "verify_code"];
       const allTools = [
         ...bankingAuthTools,

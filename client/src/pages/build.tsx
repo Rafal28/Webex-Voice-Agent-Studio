@@ -802,7 +802,7 @@ export default function Build() {
   });
 
   const sendMessageMutation = useMutation({
-    mutationFn: (data: { roomId: string; text: string }) => webexApi.sendMessage(data),
+    mutationFn: (data: { roomId?: string; text: string }) => webexApi.sendMessage(data),
     onSuccess: () => {
       setMessageText("");
       toast({
@@ -820,8 +820,8 @@ export default function Build() {
   });
 
   const handleSendMessage = () => {
-    if (!selectedRoomId || !messageText.trim()) return;
-    sendMessageMutation.mutate({ roomId: selectedRoomId, text: messageText.trim() });
+    if (!messageText.trim()) return;
+    sendMessageMutation.mutate({ roomId: selectedRoomId || undefined, text: messageText.trim() });
   };
 
   const createAgentMutation = useMutation({
@@ -1209,16 +1209,12 @@ export default function Build() {
       parameters: {
         type: "object",
         properties: {
-          roomTitle: {
-            type: "string",
-            description: "The title/name of the Webex room"
-          },
           message: {
             type: "string", 
             description: "The message content to send"
           }
         },
-        required: ["roomTitle", "message"]
+        required: ["message"]
       }
     }
   }
@@ -1237,7 +1233,6 @@ export default function Build() {
     if (toolCall.function.name === "send_webex_message") {
       const args = JSON.parse(toolCall.function.arguments);
       const result = await sendWebexMessage(
-        args.roomTitle, 
         args.message
       );
       // Continue conversation with tool result
@@ -2579,23 +2574,25 @@ export default function Build() {
                       </div>
                     )}
 
-                    {webexStats?.hasToken && webexRooms.length > 0 && (
+                    {webexStats?.hasToken && (webexRooms.length > 0 || webexStats.hasDefaultSpace) && (
                       <div className="p-4 bg-background/30 rounded-lg border border-white/5 space-y-3">
                         <Label className="text-sm font-medium">Quick Send to Webex</Label>
-                        <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
-                          <SelectTrigger className="w-full bg-background border-white/10" data-testid="select-webex-room">
-                            <SelectValue placeholder="Select a space..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-60 overflow-y-auto">
-                            {webexRooms.map((room) => (
-                              <SelectItem key={room.id} value={room.id} className="truncate">
-                                {room.title}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        {webexRooms.length > 0 && (
+                          <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
+                            <SelectTrigger className="w-full bg-background border-white/10" data-testid="select-webex-room">
+                              <SelectValue placeholder={webexStats.hasDefaultSpace ? "Use profile space or select one..." : "Select a space..."} />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-60 overflow-y-auto">
+                              {webexRooms.map((room) => (
+                                <SelectItem key={room.id} value={room.id} className="truncate">
+                                  {room.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                         
-                        {selectedRoomId && (
+                        {(selectedRoomId || webexStats.hasDefaultSpace) && (
                           <div className="space-y-2">
                             <Textarea
                               value={messageText}

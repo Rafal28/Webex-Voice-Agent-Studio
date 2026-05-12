@@ -5,7 +5,7 @@ import * as retail from "./retail";
 // Combine tools from all providers that are configured
 export const realtimeTools = [
   ...retail.retailTools,
-  ...(process.env.WEBEX_ACCESS_TOKEN ? webex.webexTools : []),
+  ...webex.webexTools,
   ...(twilio.isSmsConfigured() ? twilio.twilioTools : []),
 ];
 

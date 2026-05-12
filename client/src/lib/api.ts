@@ -91,6 +91,7 @@ export interface WebexStats {
   roomCount: number;
   messageCount: number;
   hasToken: boolean;
+  hasDefaultSpace?: boolean;
 }
 
 export interface WebexSyncResult {
@@ -170,7 +171,7 @@ export const transcribeApi = {
 };
 
 export interface SendMessageRequest {
-  roomId: string;
+  roomId?: string;
   text?: string;
   markdown?: string;
 }
@@ -178,6 +179,16 @@ export interface SendMessageRequest {
 export interface SendMessageResult {
   success: boolean;
   message: any;
+}
+
+export interface WebexProfile {
+  hasBearerToken: boolean;
+  webexSpaceId: string;
+}
+
+export interface WebexProfileUpdate {
+  bearerToken?: string;
+  webexSpaceId?: string;
 }
 
 export const webexApi = {
@@ -222,6 +233,25 @@ export const webexApi = {
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || "Failed to send message");
+    }
+    return res.json();
+  },
+
+  getProfile: async (): Promise<WebexProfile> => {
+    const res = await fetch(`${API_BASE}/webex/profile`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  updateProfile: async (data: WebexProfileUpdate): Promise<WebexProfile> => {
+    const res = await fetch(`${API_BASE}/webex/profile`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to save Webex profile");
     }
     return res.json();
   },
