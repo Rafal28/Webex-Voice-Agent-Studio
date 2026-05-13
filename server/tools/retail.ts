@@ -283,9 +283,10 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
     return { success: false, error: "Product is required for inventory lookup" };
   }
 
-  const lookup =
-    getDeterministicInventoryLookup({ product, preferredStore }) ||
-    await generateInventoryLookup({ product, preferredStore });
+  const deterministicLookup = getDeterministicInventoryLookup({ product, preferredStore });
+  const lookup = deterministicLookup || (isRetailDynamicInventoryEnabled()
+    ? await generateInventoryLookup({ product, preferredStore })
+    : null);
   if (lookup) {
     lookup.items.forEach((item) => generatedInventory.set(item.sku, item));
 
@@ -482,6 +483,10 @@ interface InventoryLookupResult {
   unavailable: RetailInventoryItem[];
   recommendation: RetailInventoryItem | null;
   generatedBy: string;
+}
+
+function isRetailDynamicInventoryEnabled(): boolean {
+  return /^(1|true|yes|on)$/i.test(String(process.env.RETAIL_DYNAMIC_INVENTORY_ENABLED || "").trim());
 }
 
 function getDeterministicInventoryLookup(input: InventoryLookupInput): InventoryLookupResult | null {
