@@ -398,6 +398,28 @@ export interface DemoPreflight {
   checks: DemoPreflightCheck[];
 }
 
+export interface DemoScenarioResult {
+  id: string;
+  label: string;
+  passed: boolean;
+  expected: string;
+  actual: string;
+  durationMs: number;
+  toolName?: string;
+  error?: string;
+}
+
+export interface DemoScenarioRun {
+  ranAt: number;
+  passed: boolean;
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+  };
+  results: DemoScenarioResult[];
+}
+
 export const demoApi = {
   getConfig: async (): Promise<DemoRuntimeConfig> => {
     const res = await fetch(`${API_BASE}/demo/config`);
@@ -422,6 +444,17 @@ export const demoApi = {
   getPreflight: async (): Promise<DemoPreflight> => {
     const res = await fetch(`${API_BASE}/demo/preflight`);
     if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  runScenarios: async (): Promise<DemoScenarioRun> => {
+    const res = await fetch(`${API_BASE}/demo/scenarios/run`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to run demo scenarios");
+    }
     return res.json();
   },
 };

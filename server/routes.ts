@@ -15,6 +15,7 @@ import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { getWebexProfile, updateWebexProfile } from "./webex-profile";
 import { getDemoPreflight, getDemoRuntimeConfigSnapshot, updateDemoRuntimeConfig } from "./demo-config";
+import { runDemoScenarios } from "./demo-scenarios";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -219,6 +220,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(await getDemoPreflight(req));
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to run demo preflight" });
+    }
+  });
+
+  app.post("/api/demo/scenarios/run", async (_req, res) => {
+    try {
+      res.json(await runDemoScenarios());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to run demo scenarios" });
     }
   });
 

@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock,
+  PlayCircle,
   RefreshCcw,
   Save,
   Settings,
@@ -50,8 +51,20 @@ export default function Preflight() {
     },
   });
 
+  const runScenarios = useMutation({
+    mutationFn: demoApi.runScenarios,
+    onError: (error: Error) => {
+      toast({
+        title: "Scenario run failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const preflight = preflightQuery.data;
-  const isBusy = preflightQuery.isFetching || saveConfig.isPending;
+  const scenarioRun = runScenarios.data;
+  const isBusy = preflightQuery.isFetching || saveConfig.isPending || runScenarios.isPending;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -148,6 +161,57 @@ export default function Preflight() {
                   <div className="mt-1 break-words text-sm text-muted-foreground">{check.detail}</div>
                 </div>
                 <Badge variant={check.ok ? "default" : "outline"}>{check.ok ? "OK" : "Fix"}</Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-lg border-white/10 bg-card/60 shadow-none">
+          <CardHeader className="pb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="text-base">Scenario Runner</CardTitle>
+              <Button onClick={() => runScenarios.mutate()} disabled={isBusy}>
+                <PlayCircle className="w-4 h-4" />
+                Run
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {runScenarios.isPending && (
+              <div className="flex items-center gap-3 rounded-lg border border-white/10 p-4 text-sm text-muted-foreground">
+                <Clock className="w-4 h-4" />
+                Running backend scenarios...
+              </div>
+            )}
+            {scenarioRun && (
+              <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                <Badge variant={scenarioRun.passed ? "default" : "outline"}>
+                  {scenarioRun.summary.passed}/{scenarioRun.summary.total} passed
+                </Badge>
+                <span>Last run {new Date(scenarioRun.ranAt).toLocaleTimeString()}</span>
+              </div>
+            )}
+            {scenarioRun?.results.map((result) => (
+              <div
+                key={result.id}
+                className="grid gap-2 rounded-lg border border-white/10 bg-background/50 p-4 md:grid-cols-[1fr_auto]"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    {result.passed ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-destructive" />
+                    )}
+                    {result.label}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">{result.expected}</div>
+                  <div className="mt-2 break-words text-sm text-muted-foreground">{result.actual}</div>
+                </div>
+                <div className="flex items-start justify-between gap-3 md:justify-end">
+                  <Badge variant={result.passed ? "default" : "outline"}>{result.passed ? "OK" : "Fail"}</Badge>
+                  <span className="text-xs text-muted-foreground">{result.durationMs}ms</span>
+                </div>
               </div>
             ))}
           </CardContent>
