@@ -37,8 +37,8 @@ export function UserProfile() {
   const saveProfileMutation = useMutation({
     mutationFn: () =>
       webexApi.updateProfile({
-        ...(bearerToken.trim() ? { bearerToken: bearerToken.trim() } : {}),
-        webexSpaceId,
+        bearerToken: bearerToken.trim(),
+        webexSpaceId: webexSpaceId.trim(),
       }),
     onSuccess: () => {
       setBearerToken("");

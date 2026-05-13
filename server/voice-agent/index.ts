@@ -40,7 +40,6 @@ const TRANSCRIPT_CORRECTION_MODEL = process.env.OPENAI_TRANSCRIPT_CORRECTION_MOD
 const RETAIL_VOICE_PRODUCT_TERMS = new Set([
   "accessories",
   "airpods",
-  "aerotab",
   "case",
   "charger",
   "earbuds",

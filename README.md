@@ -143,6 +143,7 @@ DEEPGRAM_PROJECT_ID=...
 
 # Optional integrations
 WEBEX_ACCESS_TOKEN=...
+WEBEX_SPACE_ID=...
 TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
 TWILIO_PHONE_NUMBER=...
@@ -182,6 +183,7 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `DATABASE_URL` | **Yes** | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | Strongly recommended | TTS, chat, prompt generation |
 | `WEBEX_ACCESS_TOKEN` | For Webex features | Bot or personal access token |
+| `WEBEX_SPACE_ID` | For Webex messages | Default space used when no UI override is saved |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |
 | `DEEPGRAM_PROJECT_ID` | For voice input | Deepgram project |
 | `TWILIO_ACCOUNT_SID` | For SMS/Voice | Twilio Account SID |
@@ -311,6 +313,7 @@ The app uses a static bearer token for Webex API access. No OAuth flow — confi
 2. Log in with your Webex account
 3. Copy the displayed personal access token
 4. Set as `WEBEX_ACCESS_TOKEN`
+5. Optionally set `WEBEX_SPACE_ID` as the default outbound message space
 
 Good for quick testing. Token expires after 12 hours.
 
@@ -321,7 +324,8 @@ Good for quick testing. Token expires after 12 hours.
 3. Fill in name, username, icon, description
 4. Copy the **Bot Access Token** (shown once — save immediately)
 5. Set as `WEBEX_ACCESS_TOKEN`
-6. Add the bot to any Webex spaces you want the agent to access
+6. Set `WEBEX_SPACE_ID` to the default store-manager space if you want post-call messages to work without configuring the UI profile
+7. Add the bot to any Webex spaces you want the agent to access
 
 Bot tokens never expire. The bot can only see rooms it has been invited to.
 
