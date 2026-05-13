@@ -3,8 +3,11 @@ import {
   getRetailInventoryStatusLabel,
   type RetailInventoryItem,
 } from "@shared/use-cases";
+import OpenAI from "openai";
 
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
+
+const generatedInventory = new Map<string, RetailInventoryItem>();
 
 export const retailTools = [
   {
@@ -133,7 +136,19 @@ export const retailTools = [
       properties: {
         product: {
           type: "string",
-          description: "Primary product the customer is considering.",
+          description: "Reserved or selected product. Prefer the exact product from the reservation result.",
+        },
+        originalRequest: {
+          type: "string",
+          description: "Optional original item the customer asked for before substitutions or nearby alternatives.",
+        },
+        store: {
+          type: "string",
+          description: "Optional store where the primary product is being reserved.",
+        },
+        recentConversationSummary: {
+          type: "string",
+          description: "Brief summary of what the customer said in this call that may help personalize the recommendation.",
         },
         customerName: {
           type: "string",
@@ -186,14 +201,23 @@ export async function user_history_lookup(args: Record<string, any>): Promise<To
 
   return {
     success: true,
-    result: `Fetched ${conversationLimit} conversations plus previous orders, issues, and engagement history for John.`,
+    result: `Fetched ${conversationLimit} past conversations, previous orders, open issues, transactions, and engagement signals for John. Context source: prior Webex/SMS conversations, order history, transaction activity, store visits, and browsing engagement.`,
     data: {
       customerId: String(args.customerId || "cust-john-042"),
       conversationCount: conversationLimit,
+      contextSources: [
+        "Past Webex conversations",
+        "SMS conversations",
+        "Previous orders",
+        "Transaction activity",
+        "Open and resolved issues",
+        "Store visit notes",
+        "Product browsing engagement",
+      ],
       previousOrder: {
         orderId: "ORD-88421",
         date: "May 3",
-        item: "AeroTab 11-inch, 256GB, Blue",
+        item: "iPad Pro 11-inch, 256GB, Blue",
         status: "Not purchased yet; customer compared pickup options",
       },
       previousIssues: [
@@ -211,10 +235,12 @@ export async function user_history_lookup(args: Record<string, any>): Promise<To
         },
       ],
       engagements: [
-        "Viewed AeroTab 11-inch product page three times this week",
+        "Viewed iPad product pages three times this week",
         "Clicked pickup availability for San Jose and Palo Alto",
         "Previously responded well to concise SMS follow-up",
       ],
+      timelineSummary:
+        "Combined 500 past conversations with order history, transactions, issue records, store visit notes, and browsing engagement.",
       usableLaterContext:
         "Use this context only when it helps the current conversation. Do not announce the internal lookup.",
     },
@@ -245,60 +271,50 @@ export async function get_customer_context(args: Record<string, any>): Promise<T
 }
 
 export async function lookup_inventory(args: Record<string, any>): Promise<ToolResult> {
-  const query = String(args.product || "").trim().toLowerCase();
+  const product = String(args.product || "").trim();
+  const query = product.toLowerCase();
+  const preferredStore = String(args.preferredStore || "").trim();
   if (!query) {
     return { success: false, error: "Product is required for inventory lookup" };
   }
 
-  const matches = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.filter((item) => {
-    const text = `${item.sku} ${item.name} ${item.category} ${item.store}`.toLowerCase();
-    return query
-      .split(/\s+/)
-      .filter(Boolean)
-      .some((part) => text.includes(part));
-  });
+  const dynamicLookup = await generateInventoryLookup({ product, preferredStore });
+  if (dynamicLookup) {
+    dynamicLookup.items.forEach((item) => generatedInventory.set(item.sku, item));
 
-  if (matches.length === 0) {
     return {
       success: true,
-      result: `${String(args.product || "That item").trim()} is not showing as available in the current inventory right now. Similar products, nearby availability, or a back-in-stock notification may still be possible.`,
+      result: [
+        dynamicLookup.unavailable[0]
+          ? `${dynamicLookup.unavailable[0].name} is out of stock at ${dynamicLookup.unavailable[0].store}.`
+          : null,
+        dynamicLookup.recommendation
+          ? `${dynamicLookup.recommendation.name} is ${getRetailInventoryStatusLabel(dynamicLookup.recommendation.status).toLowerCase()} at ${dynamicLookup.recommendation.store}.`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
       data: {
         query,
-        items: [],
-        available: [],
-        unavailable: [],
-        recommendation: null,
-        noMatch: true,
+        items: dynamicLookup.items,
+        available: dynamicLookup.available,
+        unavailable: dynamicLookup.unavailable,
+        recommendation: dynamicLookup.recommendation,
+        generatedBy: dynamicLookup.generatedBy,
       },
     };
   }
 
-  const items = matches;
-  const available = items.filter((item) => item.status !== "out_of_stock" && item.quantity > 0);
-  const unavailable = items.filter((item) => item.status === "out_of_stock" || item.quantity <= 0);
-  const recommendation =
-    available.find((item) => item.store === "Palo Alto") ||
-    available[0] ||
-    items[0];
-
   return {
     success: true,
-    result: [
-      unavailable.length
-        ? `${unavailable[0].name} is out of stock at ${unavailable[0].store}.`
-        : null,
-      recommendation
-        ? `${recommendation.name} is ${getRetailInventoryStatusLabel(recommendation.status).toLowerCase()} at ${recommendation.store}.`
-        : null,
-    ]
-      .filter(Boolean)
-      .join(" "),
+    result: `${product} is not showing as available in the current inventory right now. Similar products, nearby availability, or a back-in-stock notification may still be possible.`,
     data: {
       query,
-      items,
-      available,
-      unavailable,
-      recommendation,
+      items: [],
+      available: [],
+      unavailable: [],
+      recommendation: null,
+      noMatch: true,
     },
   };
 }
@@ -335,17 +351,34 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
 
 export async function recommend_accessory(args: Record<string, any>): Promise<ToolResult> {
   const product = String(args.product || "").trim();
-  const accessory = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.find((item) => item.sku === "CASE-PURPLE-11");
+  const originalRequest = String(args.originalRequest || "").trim();
+  const store = String(args.store || "").trim();
+  const recentConversationSummary = String(args.recentConversationSummary || "").trim();
+  const recommendation = await generateAccessoryRecommendation({
+    product,
+    originalRequest,
+    store,
+    recentConversationSummary,
+  });
+  const accessory = recommendation?.item;
+  if (accessory) generatedInventory.set(accessory.sku, accessory);
 
   return {
     success: true,
     result: accessory
-      ? `Recommend ${accessory.name} because John mentioned this is a birthday gift and his daughter likes purple accessories.`
-      : "No personalized accessory is available in the current inventory data.",
+      ? `Recommend ${accessory.name} because ${recommendation.reason}. Source: ${recommendation.source}. Suggested wording: ${recommendation.suggestedWording}`
+      : "No accessory recommendation is available for this product from the current accessory inventory.",
     data: {
       product,
+      originalRequest,
+      store,
+      recentConversationSummary,
       recommendation: accessory,
-      rationale: "Persistent customer memory: birthday gift for daughter plus purple accessory preference.",
+      rationale: recommendation?.reason || "No compatible accessory was selected from the current accessory inventory.",
+      rationaleSource: recommendation?.source || "none",
+      personalizationSignal: recommendation?.personalizationSignal || "",
+      suggestedWording: recommendation?.suggestedWording || "",
+      generatedBy: recommendation?.generatedBy || "none",
     },
   };
 }
@@ -362,10 +395,281 @@ function maskPhone(phone: string): string {
   return `***-***-${digits.slice(-4)}`;
 }
 
+interface InventoryLookupInput {
+  product: string;
+  preferredStore: string;
+}
+
+interface InventoryLookupResult {
+  items: RetailInventoryItem[];
+  available: RetailInventoryItem[];
+  unavailable: RetailInventoryItem[];
+  recommendation: RetailInventoryItem | null;
+  generatedBy: string;
+}
+
+async function generateInventoryLookup(input: InventoryLookupInput): Promise<InventoryLookupResult | null> {
+  if (!process.env.OPENAI_API_KEY || !input.product) {
+    return null;
+  }
+
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const model = process.env.RETAIL_INVENTORY_MODEL || "gpt-4o-mini";
+  const preferredStore = /palo alto/i.test(input.preferredStore) ? "Palo Alto" : "San Jose";
+  const alternateStore = preferredStore === "San Jose" ? "Palo Alto" : "San Jose";
+
+  try {
+    const completion = await client.chat.completions.create({
+      model,
+      temperature: 0.35,
+      max_tokens: 520,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Generate realistic consumer electronics inventory for a voice retail agent. Return strict JSON only. Use real product naming when the customer asks for a known product family. Do not use fictional demo brands such as AeroTab, NovaBook, PulseWatch, Orbit Phone, PageLite, SonicWave, PlayBox, HomeMesh, EchoNest, ViewMax, SkyLite, or VistaCam. Every lookup must be tied to San Jose and Palo Alto only. One store must be out_of_stock and the other must be in_stock.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            customerRequest: input.product,
+            preferredStore,
+            alternateStore,
+            rule:
+              "If a preferred store is supplied, make the requested item out_of_stock there and in_stock at the alternate store. If the request is vague, choose a natural current consumer electronics product that matches the request.",
+            requiredJsonShape: {
+              requestedProduct: {
+                sku: "short uppercase SKU",
+                name: "specific product name",
+                category: "Tablet | Phone | Smartwatch | Laptop | Headphones | Camera | Gaming Console | Networking | Smart Home | Monitor | E-Reader | Accessory",
+                price: "USD price like $799",
+                unavailableStore: preferredStore,
+                availableStore: alternateStore,
+                availableQuantity: "integer from 1 to 8",
+                eta: "short restock ETA",
+                unavailableNote: "short store-safe note",
+                availableNote: "short store-safe note",
+              },
+              alternatives: [
+                {
+                  sku: "optional similar product SKU",
+                  name: "optional similar product name",
+                  category: "same broad category",
+                  price: "USD price",
+                  unavailableStore: alternateStore,
+                  availableStore: preferredStore,
+                  availableQuantity: "integer from 1 to 8",
+                  eta: "short restock ETA",
+                  unavailableNote: "short note",
+                  availableNote: "short note",
+                },
+              ],
+            },
+          }),
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(raw);
+    const products = [parsed.requestedProduct, ...(Array.isArray(parsed.alternatives) ? parsed.alternatives.slice(0, 1) : [])]
+      .filter(Boolean)
+      .flatMap((item) => buildInventoryPairFromGeneratedItem(item));
+    const items = products.filter((item) => !hasDemoBrand(item.name));
+    const available = items.filter((item) => item.status !== "out_of_stock" && item.quantity > 0);
+    const unavailable = items.filter((item) => item.status === "out_of_stock" || item.quantity <= 0);
+    const recommendation = available[0] || null;
+
+    if (!items.length || !recommendation) return null;
+
+    return {
+      items,
+      available,
+      unavailable,
+      recommendation,
+      generatedBy: `openai:${model}`,
+    };
+  } catch (error: any) {
+    console.error("Dynamic inventory lookup failed:", error?.message || error);
+    return null;
+  }
+}
+
+function buildInventoryPairFromGeneratedItem(item: any): RetailInventoryItem[] {
+  const sku = sanitizeSku(item?.sku || item?.name || "ITEM");
+  const name = sanitizeGeneratedText(item?.name || "Requested product");
+  const category = sanitizeGeneratedText(item?.category || "Consumer Electronics");
+  const price = sanitizeGeneratedText(item?.price || "$499");
+  const unavailableStore = /palo alto/i.test(String(item?.unavailableStore)) ? "Palo Alto" : "San Jose";
+  const availableStore = unavailableStore === "San Jose" ? "Palo Alto" : "San Jose";
+  const quantity = Math.max(1, Math.min(8, Math.floor(Number(item?.availableQuantity) || 3)));
+
+  return [
+    {
+      sku,
+      name,
+      category,
+      store: unavailableStore,
+      status: "out_of_stock",
+      quantity: 0,
+      price,
+      eta: sanitizeGeneratedText(item?.eta || "Back in 3-5 days"),
+      note: sanitizeGeneratedText(item?.unavailableNote || `${unavailableStore} is temporarily out of stock.`),
+    },
+    {
+      sku,
+      name,
+      category,
+      store: availableStore,
+      status: "in_stock",
+      quantity,
+      price,
+      note: sanitizeGeneratedText(item?.availableNote || `Available for pickup at ${availableStore}.`),
+    },
+  ];
+}
+
+function sanitizeSku(value: string): string {
+  return value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36) || "ITEM";
+}
+
+function sanitizeGeneratedText(value: string): string {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function hasDemoBrand(value: string): boolean {
+  return /\b(aerotab|novabook|pulsewatch|orbit phone|pagelite|sonicwave|playbox|homemesh|echonest|viewmax|skylite|vistacam)\b/i.test(value);
+}
+
+interface AccessoryRecommendationInput {
+  product: string;
+  originalRequest: string;
+  store: string;
+  recentConversationSummary: string;
+}
+
+interface AccessoryRecommendation {
+  item: RetailInventoryItem;
+  reason: string;
+  source: string;
+  personalizationSignal: string;
+  suggestedWording: string;
+  generatedBy: string;
+}
+
+async function generateAccessoryRecommendation(
+  input: AccessoryRecommendationInput
+): Promise<AccessoryRecommendation | null> {
+  if (!process.env.OPENAI_API_KEY || !input.product) {
+    return null;
+  }
+
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const model = process.env.RETAIL_RECOMMENDATION_MODEL || "gpt-4o-mini";
+  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
+
+  try {
+    const completion = await client.chat.completions.create({
+      model,
+      temperature: 0.55,
+      max_tokens: 520,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Generate one personalized accessory recommendation for a real-time consumer electronics retail agent. Return strict JSON only. Use real accessory naming compatible with the reserved product. Prefer a recommendation that ties to customer memory, prior orders, past conversations, transaction behavior, pickup habits, or what the customer said in the current call. You may synthesize a plausible personal insight from the provided customer memory and current request, but keep it caller-safe and natural. Do not use fictional demo brands such as AeroTab, NovaBook, PulseWatch, Orbit Phone, PageLite, SonicWave, PlayBox, HomeMesh, EchoNest, ViewMax, SkyLite, or VistaCam. If no natural personalized accessory exists, return name as an empty string.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            reservedProduct: input.product,
+            originalCustomerRequest: input.originalRequest || null,
+            reservationStore: input.store || null,
+            currentConversation: input.recentConversationSummary || null,
+            customerMemory: {
+              name: customer.name,
+              loyaltyTier: customer.loyaltyTier,
+              preferences: customer.preferences,
+              pastChats: customer.pastChats,
+              preferredPickupTime: customer.preferredPickupTime,
+              relationshipContext: customer.relationshipContext,
+              synthesizedHistorySignals: [
+                "Prior conversations show John compares pickup options before committing.",
+                "Order activity suggests John prefers practical add-ons that make same-day pickup complete.",
+                "Store visit notes say John usually picks up after work and values quick handoff at the counter.",
+                "Past SMS engagement shows John responds well to concise, useful add-on suggestions.",
+              ],
+            },
+            requiredJsonShape: {
+              sku: "short uppercase accessory SKU",
+              name: "specific accessory product name, or empty string",
+              price: "USD price like $49",
+              quantity: "integer from 1 to 8",
+              reason: "one concise reason that combines product fit with a customer-specific memory or current-call detail",
+              source: "current conversation plus product fit | prior conversations plus product fit | order history plus product fit | pickup behavior plus product fit | customer history plus product fit | none",
+              personalizationSignal: "the specific memory/current-call detail used, phrased safely for internal display",
+              suggestedWording:
+                "one short natural sentence the assistant can say. It should briefly say why this is personal, without sounding invasive. If original request differs from reserved product, start with 'For the [reserved product] we reserved...' and do not imply the accessory fits the original requested product.",
+            },
+          }),
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(raw);
+    const name = sanitizeGeneratedText(parsed.name || "");
+    if (!name || hasDemoBrand(name)) return null;
+
+    const store = /san jose|palo alto/i.test(input.store) ? input.store : "Palo Alto";
+    const item: RetailInventoryItem = {
+      sku: sanitizeSku(parsed.sku || name),
+      name,
+      category: "Accessory",
+      store,
+      status: "in_stock",
+      quantity: Math.max(1, Math.min(8, Math.floor(Number(parsed.quantity) || 3))),
+      price: sanitizeGeneratedText(parsed.price || "$49"),
+      note: "Dynamically recommended accessory for the reserved product.",
+    };
+
+    return {
+      item,
+      reason: normalizeRecommendationReason(String(parsed.reason || `it pairs with ${input.product}`)),
+      source: String(parsed.source || "customer history plus product fit").trim(),
+      personalizationSignal: normalizeRecommendationSentence(
+        String(parsed.personalizationSignal || "Personalized from customer history and current reservation context")
+      ),
+      suggestedWording: normalizeRecommendationSentence(
+        String(parsed.suggestedWording || `This pairs well with the ${input.product}. Want me to add it?`)
+      ),
+      generatedBy: `openai:${model}`,
+    };
+  } catch (error: any) {
+    console.error("Dynamic accessory recommendation failed:", error?.message || error);
+    return null;
+  }
+}
+
+function normalizeRecommendationSentence(text: string): string {
+  return text.trim().replace(/\s+/g, " ").replace(/[.。]+$/g, "");
+}
+
+function normalizeRecommendationReason(text: string): string {
+  const normalized = normalizeRecommendationSentence(text);
+  return normalized ? normalized.charAt(0).toLowerCase() + normalized.slice(1) : normalized;
+}
+
 function findInventoryItem(productOrSku: string, store: string): RetailInventoryItem | undefined {
   const query = productOrSku.toLowerCase();
   const normalizedStore = store.toLowerCase();
-  return RETAIL_STORE_ASSISTANT_USE_CASE.inventory.find((item) => {
+  return [...generatedInventory.values(), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find((item) => {
     const matchesProduct =
       item.sku.toLowerCase() === query ||
       item.name.toLowerCase().includes(query) ||
@@ -373,4 +677,10 @@ function findInventoryItem(productOrSku: string, store: string): RetailInventory
       query.includes(item.category.toLowerCase());
     return matchesProduct && item.store.toLowerCase().includes(normalizedStore);
   });
+}
+
+function findAvailableInventoryItemBySku(sku: string): RetailInventoryItem | undefined {
+  return [...generatedInventory.values(), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find(
+    (item) => item.sku === sku && item.status !== "out_of_stock" && item.quantity > 0
+  );
 }

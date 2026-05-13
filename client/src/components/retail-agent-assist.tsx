@@ -76,8 +76,8 @@ export function createRetailAssistState(): RetailAssistState {
   return {
     customer: RETAIL_STORE_ASSISTANT_USE_CASE.customer,
     inventory: RETAIL_STORE_ASSISTANT_USE_CASE.inventory,
-    recommendation: RETAIL_STORE_ASSISTANT_USE_CASE.inventory.find((item) => item.sku === "CASE-PURPLE-11"),
-    recommendationRationale: "Persistent memory: birthday gift for daughter plus purple accessory preference.",
+    recommendation: undefined,
+    recommendationRationale: "",
     handoff: RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook,
     toolEvents: [],
     completedStages: {
@@ -837,7 +837,9 @@ function formatToolName(name: string): string {
 function getTimelineEventDetail(event: RetailToolEvent): string {
   if (event.result) return event.result;
   if (event.status === "running" && event.toolName === "retail_user_lookup") return "Looking up caller profile";
-  if (event.status === "running" && event.toolName === "retail_user_history_lookup") return "Fetching 500 conversations, previous orders, issues, and engagements";
+  if (event.status === "running" && event.toolName === "retail_user_history_lookup") {
+    return "Fetching 500 past conversations plus order history, transactions, issues, store visits, and engagement signals";
+  }
   if (event.status === "running" && event.toolName === "retail_order_confirmation") return "Sending order confirmation SMS with pickup details";
   if (event.status === "running" && event.toolName === "retail_store_manager_summary") return "Sending Store Manager Summary to Webex";
   if (event.status === "running") return "Tool call in progress";
