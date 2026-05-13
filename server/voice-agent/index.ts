@@ -9,6 +9,7 @@ import { mapRealtimeVoice } from "./voice";
 import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { createRetailToolSession, type ToolExecutionContext } from "../tools/tool-context";
+import { getDemoRuntimeConfigSnapshot } from "../demo-config";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 
@@ -40,6 +41,13 @@ const RETAIL_VOICE_PRODUCT_TERMS = new Set([
   "smartwatch",
   "tablet",
 ]);
+
+function createCallToolContext(): ToolExecutionContext {
+  return {
+    retail: createRetailToolSession(),
+    demo: getDemoRuntimeConfigSnapshot(),
+  };
+}
 
 interface BrowserTranscriptGuardContext {
   acceptedUserTranscriptCount: number;
@@ -903,7 +911,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
-  let toolContext: ToolExecutionContext = { retail: createRetailToolSession() };
+  let toolContext: ToolExecutionContext = createCallToolContext();
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -926,7 +934,7 @@ function handleTwilioSession(ws: WebSocket): void {
           clearTimeout(endCallTimer);
           endCallTimer = null;
         }
-        toolContext = { retail: createRetailToolSession() };
+        toolContext = createCallToolContext();
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
         let voice = "alloy";
@@ -1812,7 +1820,7 @@ function handleBrowserSession(ws: WebSocket): void {
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
-  let browserToolContext: ToolExecutionContext = { retail: createRetailToolSession() };
+  let browserToolContext: ToolExecutionContext = createCallToolContext();
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw, isBinary) => {
@@ -1845,7 +1853,7 @@ function handleBrowserSession(ws: WebSocket): void {
           clearTimeout(endCallTimer);
           endCallTimer = null;
         }
-        browserToolContext = { retail: createRetailToolSession() };
+        browserToolContext = createCallToolContext();
         latestReservation = null;
         latestRecommendedUpsell = "";
         startupRetailContext = "";

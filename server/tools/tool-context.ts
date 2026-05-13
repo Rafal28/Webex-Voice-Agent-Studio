@@ -6,6 +6,9 @@ export interface RetailToolSession {
 
 export interface ToolExecutionContext {
   retail?: RetailToolSession;
+  demo?: {
+    webexSpaceId?: string;
+  };
 }
 
 export function createRetailToolSession(): RetailToolSession {
