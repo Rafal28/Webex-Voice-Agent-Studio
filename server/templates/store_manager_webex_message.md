@@ -28,10 +28,3 @@
 <h4>➡️ Recommended Next Step</h4>
 
 {{recommended_next_step}}
-
-<details>
-<summary>📋 Call Transcript Summary</summary>
-
-{{transcript}}
-
-</details>
