@@ -283,32 +283,29 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
     return { success: false, error: "Product is required for inventory lookup" };
   }
 
-  const deterministicLookup = getDeterministicInventoryLookup({ product, preferredStore });
-  const lookup = deterministicLookup || (isRetailDynamicInventoryEnabled()
-    ? await generateInventoryLookup({ product, preferredStore })
-    : null);
-  if (lookup) {
-    lookup.items.forEach((item) => generatedInventory.set(item.sku, item));
+  const dynamicLookup = await generateInventoryLookup({ product, preferredStore });
+  if (dynamicLookup) {
+    dynamicLookup.items.forEach((item) => generatedInventory.set(item.sku, item));
 
     return {
       success: true,
       result: [
-        lookup.unavailable[0]
-          ? `${lookup.unavailable[0].name} is out of stock at ${lookup.unavailable[0].store}.`
+        dynamicLookup.unavailable[0]
+          ? `${dynamicLookup.unavailable[0].name} is out of stock at ${dynamicLookup.unavailable[0].store}.`
           : null,
-        lookup.recommendation
-          ? `${lookup.recommendation.name} is ${getRetailInventoryStatusLabel(lookup.recommendation.status).toLowerCase()} at ${lookup.recommendation.store}.`
+        dynamicLookup.recommendation
+          ? `${dynamicLookup.recommendation.name} is ${getRetailInventoryStatusLabel(dynamicLookup.recommendation.status).toLowerCase()} at ${dynamicLookup.recommendation.store}.`
           : null,
       ]
         .filter(Boolean)
         .join(" "),
       data: {
         query,
-        items: lookup.items,
-        available: lookup.available,
-        unavailable: lookup.unavailable,
-        recommendation: lookup.recommendation,
-        generatedBy: lookup.generatedBy,
+        items: dynamicLookup.items,
+        available: dynamicLookup.available,
+        unavailable: dynamicLookup.unavailable,
+        recommendation: dynamicLookup.recommendation,
+        generatedBy: dynamicLookup.generatedBy,
       },
     };
   }
@@ -483,110 +480,6 @@ interface InventoryLookupResult {
   unavailable: RetailInventoryItem[];
   recommendation: RetailInventoryItem | null;
   generatedBy: string;
-}
-
-function isRetailDynamicInventoryEnabled(): boolean {
-  return /^(1|true|yes|on)$/i.test(String(process.env.RETAIL_DYNAMIC_INVENTORY_ENABLED || "").trim());
-}
-
-function getDeterministicInventoryLookup(input: InventoryLookupInput): InventoryLookupResult | null {
-  const query = input.product.toLowerCase();
-  const preferredStore = /palo alto/i.test(input.preferredStore) ? "Palo Alto" : "San Jose";
-  const alternateStore = preferredStore === "San Jose" ? "Palo Alto" : "San Jose";
-
-  if (/\b(workstation|powerful laptop|high[-\s]?power.*laptop|mobile workstation)\b/.test(query)) {
-    return buildDeterministicLookupPair({
-      sku: "LAP-THINKPAD-P1-G7-32GB",
-      name: "Lenovo ThinkPad P1 Gen 7 Mobile Workstation",
-      category: "Laptop",
-      price: "$2,199",
-      unavailableStore: preferredStore,
-      availableStore: alternateStore,
-      quantity: 2,
-      eta: "Back in 3-5 days",
-      unavailableNote: `${preferredStore} is out of the workstation configuration today.`,
-      availableNote: `${alternateStore} has the workstation configuration available for pickup.`,
-      generatedBy: "deterministic:workstation-laptop",
-    });
-  }
-
-  if (/\b(laptop|notebook|macbook|computer)\b/.test(query)) {
-    return buildDeterministicLookupPair({
-      sku: "LAP-MBP-14-M3PRO-18GB",
-      name: "MacBook Pro 14-inch, M3 Pro, 18GB",
-      category: "Laptop",
-      price: "$1,999",
-      unavailableStore: preferredStore,
-      availableStore: alternateStore,
-      quantity: 3,
-      eta: "Back tomorrow",
-      unavailableNote: `${preferredStore} is temporarily out of this laptop configuration.`,
-      availableNote: `${alternateStore} has this laptop available for same-day pickup.`,
-      generatedBy: "deterministic:laptop",
-    });
-  }
-
-  if (/\b(projector|laser projector|home cinema|laser)\b/.test(query)) {
-    return buildDeterministicLookupPair({
-      sku: "PROJ-EPSON-LS12000-4K",
-      name: "Epson Pro Cinema LS12000 4K Laser Projector",
-      category: "Projector",
-      price: "$4,999",
-      unavailableStore: preferredStore,
-      availableStore: alternateStore,
-      quantity: 1,
-      eta: "Back next week",
-      unavailableNote: `${preferredStore} is out of the higher-power laser projector today.`,
-      availableNote: `${alternateStore} has one higher-power laser projector available for pickup.`,
-      generatedBy: "deterministic:laser-projector",
-    });
-  }
-
-  return null;
-}
-
-function buildDeterministicLookupPair(input: {
-  sku: string;
-  name: string;
-  category: string;
-  price: string;
-  unavailableStore: string;
-  availableStore: string;
-  quantity: number;
-  eta: string;
-  unavailableNote: string;
-  availableNote: string;
-  generatedBy: string;
-}): InventoryLookupResult {
-  const unavailable: RetailInventoryItem = {
-    sku: input.sku,
-    name: input.name,
-    category: input.category,
-    store: input.unavailableStore,
-    status: "out_of_stock",
-    quantity: 0,
-    price: input.price,
-    eta: input.eta,
-    note: input.unavailableNote,
-  };
-  const available: RetailInventoryItem = {
-    sku: input.sku,
-    name: input.name,
-    category: input.category,
-    store: input.availableStore,
-    status: "in_stock",
-    quantity: input.quantity,
-    price: input.price,
-    note: input.availableNote,
-  };
-
-  return {
-    items: [unavailable, available],
-    available: [available],
-    unavailable: [unavailable],
-    recommendation: available,
-    generatedBy: input.generatedBy,
-  };
 }
 
 async function generateInventoryLookup(input: InventoryLookupInput): Promise<InventoryLookupResult | null> {
