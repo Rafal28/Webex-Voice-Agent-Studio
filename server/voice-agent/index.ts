@@ -1630,23 +1630,26 @@ ${startupRetailContext}`;
       data: { reason },
       timestamp: Date.now(),
     });
-    openai?.triggerResponse({
-      input: [
-        {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: getClosingInstruction(reason),
-            },
-          ],
-        },
-      ],
-      output_modalities: ["audio"],
-      instructions:
-        "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
-    });
+    const alreadySaidClosing = /thanks for (calling|your time)|good (rest|day)|have a (great|good|wonderful|nice)|goodbye|take care|bye now/i.test(lastAssistantTranscript);
+    if (!alreadySaidClosing) {
+      openai?.triggerResponse({
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: getClosingInstruction(reason),
+              },
+            ],
+          },
+        ],
+        output_modalities: ["audio"],
+        instructions:
+          "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
+      });
+    }
     scheduleTwilioEndCall(reason, TWILIO_END_CALL_FALLBACK_MS);
   }
 
@@ -2426,23 +2429,26 @@ ${startupRetailContext}`;
       data: { reason },
       timestamp: Date.now(),
     });
-    openai?.triggerResponse({
-      input: [
-        {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: getClosingInstruction(reason),
-            },
-          ],
-        },
-      ],
-      output_modalities: ["audio"],
-      instructions:
-        "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
-    });
+    const alreadySaidClosing = /thanks for (calling|your time)|good (rest|day)|have a (great|good|wonderful|nice)|goodbye|take care|bye now/i.test(lastAssistantTranscript);
+    if (!alreadySaidClosing) {
+      openai?.triggerResponse({
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: getClosingInstruction(reason),
+              },
+            ],
+          },
+        ],
+        output_modalities: ["audio"],
+        instructions:
+          "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
+      });
+    }
     scheduleBrowserEndCall(reason, BROWSER_END_CALL_FALLBACK_MS);
   }
 
