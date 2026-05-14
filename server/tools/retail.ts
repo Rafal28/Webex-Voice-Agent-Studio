@@ -76,7 +76,7 @@ export const retailTools = [
     type: "function" as const,
     name: "retail_lookup_inventory",
     description:
-      "Look up inventory by product or category across the current store and nearby stores.",
+      "Look up inventory by product or category across the current store and nearby stores. You must explicitly ask the user for their preferred pickup location before calling this tool.",
     parameters: {
       type: "object",
       properties: {
@@ -86,10 +86,10 @@ export const retailTools = [
         },
         preferredStore: {
           type: "string",
-          description: "Optional preferred store or current location.",
+          description: "The location the customer wants to pick up from. DO NOT guess or assume based on profile. You must ask the customer explicitly.",
         },
       },
-      required: ["product"],
+      required: ["product", "preferredStore"],
     },
   },
   {
@@ -282,6 +282,13 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
   const preferredStore = String(args.preferredStore || "").trim();
   if (!query) {
     return { success: false, error: "Product is required for inventory lookup" };
+  }
+  if (!preferredStore) {
+    return { 
+      success: false, 
+      error: "You MUST ask the customer what location they want to pick up the product from before checking inventory.",
+      data: { product }
+    };
   }
 
   const ENABLE_STATIC_INVENTORY = process.env.ENABLE_STATIC_INVENTORY === "true";
