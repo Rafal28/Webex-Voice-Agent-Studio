@@ -8,7 +8,8 @@ import OpenAI from "openai";
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
 
 const generatedInventory = new Map<string, RetailInventoryItem>();
-const RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS = 3500;
+const ENABLE_RETAIL_TIMEOUT = process.env.ENABLE_RETAIL_TIMEOUT === "true";
+const RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS = ENABLE_RETAIL_TIMEOUT ? 3500 : 0;
 
 export const retailTools = [
   {
@@ -283,32 +284,85 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
     return { success: false, error: "Product is required for inventory lookup" };
   }
 
-  const dynamicLookup = await generateInventoryLookup({ product, preferredStore });
-  if (dynamicLookup) {
-    dynamicLookup.items.forEach((item) => generatedInventory.set(item.sku, item));
+  const ENABLE_STATIC_INVENTORY = process.env.ENABLE_STATIC_INVENTORY === "true";
 
-    return {
-      success: true,
-      result: [
-        dynamicLookup.unavailable[0]
-          ? `${dynamicLookup.unavailable[0].name} is out of stock at ${dynamicLookup.unavailable[0].store}.`
-          : null,
-        dynamicLookup.recommendation
-          ? `${dynamicLookup.recommendation.name} is ${getRetailInventoryStatusLabel(dynamicLookup.recommendation.status).toLowerCase()} at ${dynamicLookup.recommendation.store}.`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" "),
-      data: {
-        query,
-        items: dynamicLookup.items,
-        available: dynamicLookup.available,
-        unavailable: dynamicLookup.unavailable,
-        recommendation: dynamicLookup.recommendation,
-        generatedBy: dynamicLookup.generatedBy,
-      },
-    };
+  if (ENABLE_STATIC_INVENTORY) {
+    const items = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.filter((item) => {
+      // Split query into words to do a loose match if strict substring fails
+      const queryWords = query.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+      const nameLower = item.name.toLowerCase();
+      const skuLower = item.sku.toLowerCase();
+      const catLower = item.category.toLowerCase();
+
+      const isStrictMatch = nameLower.includes(query) || catLower.includes(query) || skuLower.includes(query) || query.includes(nameLower);
+      if (isStrictMatch) return true;
+
+      if (queryWords.length > 0) {
+        // Find if any word matches the product name (this helps if user says "iphone 14 pro" and we have "Orbit Phone Pro")
+        // But only if it's highly relevant. Since we want to be safe, we might just rely on dynamic fallback.
+      }
+      return false;
+    });
+
+    if (items.length > 0) {
+      const normalizedPreferredStore = /palo alto/i.test(preferredStore) ? "Palo Alto" : "San Jose";
+      const available = items.filter((item) => item.status !== "out_of_stock" && item.quantity > 0);
+      const unavailable = items.filter((item) => item.status === "out_of_stock" || item.quantity <= 0);
+      
+      const preferredUnavailable = unavailable.find(item => item.store === normalizedPreferredStore) || unavailable[0];
+      const recommendation = available[0] || null;
+
+      return {
+        success: true,
+        result: [
+          preferredUnavailable
+            ? `${preferredUnavailable.name} is out of stock at ${preferredUnavailable.store}.`
+            : null,
+          recommendation
+            ? `${recommendation.name} is ${getRetailInventoryStatusLabel(recommendation.status).toLowerCase()} at ${recommendation.store}.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" ") || "Item found in static inventory but no availability formatting matched.",
+        data: {
+          query,
+          items,
+          available,
+          unavailable,
+          recommendation,
+          generatedBy: "static-catalog",
+        },
+      };
+    }
   }
+
+  // Fallback to dynamic if static didn't match, or if static is disabled
+  const dynamicLookup = await generateInventoryLookup({ product, preferredStore });
+    if (dynamicLookup) {
+      dynamicLookup.items.forEach((item) => generatedInventory.set(item.sku, item));
+
+      return {
+        success: true,
+        result: [
+          dynamicLookup.unavailable[0]
+            ? `${dynamicLookup.unavailable[0].name} is out of stock at ${dynamicLookup.unavailable[0].store}.`
+            : null,
+          dynamicLookup.recommendation
+            ? `${dynamicLookup.recommendation.name} is ${getRetailInventoryStatusLabel(dynamicLookup.recommendation.status).toLowerCase()} at ${dynamicLookup.recommendation.store}.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        data: {
+          query,
+          items: dynamicLookup.items,
+          available: dynamicLookup.available,
+          unavailable: dynamicLookup.unavailable,
+          recommendation: dynamicLookup.recommendation,
+          generatedBy: dynamicLookup.generatedBy,
+        },
+      };
+    }
 
   return {
     success: true,
@@ -428,19 +482,40 @@ export async function recommend_gift_accessory(args: Record<string, any>): Promi
   const originalRequest = String(args.originalRequest || "").trim();
   const store = String(args.store || "").trim();
   const recentConversationSummary = String(args.recentConversationSummary || "").trim();
-  const recommendation = await generateGiftAccessoryRecommendation({
-    product,
-    originalRequest,
-    store,
-    recentConversationSummary,
-  });
+
+  const ENABLE_STATIC_INVENTORY = process.env.ENABLE_STATIC_INVENTORY === "true";
+
+  let recommendation;
+  if (ENABLE_STATIC_INVENTORY) {
+    const accessories = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.filter(item => item.category.toLowerCase() === "accessory" && item.status !== "out_of_stock");
+    const accessory = accessories.find(item => item.name.toLowerCase().includes("purple") || item.name.toLowerCase().includes("case") || item.name.toLowerCase().includes("band")) || accessories[0];
+    
+    if (accessory) {
+      recommendation = {
+        item: accessory,
+        reason: "it matches the customer's history indicating her daughter likes purple",
+        source: "customer history plus product fit",
+        personalizationSignal: "Customer previously mentioned the purchase is a birthday gift for their daughter who likes purple.",
+        suggestedWording: `Since you mentioned it's a birthday gift for your daughter and she likes purple, would you like me to add a ${accessory.name}?`,
+        generatedBy: "static-catalog",
+      };
+    }
+  } else {
+    recommendation = await generateGiftAccessoryRecommendation({
+      product,
+      originalRequest,
+      store,
+      recentConversationSummary,
+    });
+  }
+
   const accessory = recommendation?.item;
   if (accessory) generatedInventory.set(accessory.sku, accessory);
 
   return {
     success: true,
     result: accessory
-      ? `Retrieving from long term memory. Looking at past conversations: Recommend ${accessory.name} because ${recommendation.reason}. Source: ${recommendation.source}. Suggested wording: ${recommendation.suggestedWording}`
+      ? `Retrieving from long term memory. Looking at past conversations: Recommend ${accessory.name} because ${recommendation?.reason}. Source: ${recommendation?.source}. Suggested wording: ${recommendation?.suggestedWording}`
       : "No accessory recommendation is available for this product from the current accessory inventory.",
     data: {
       product,
@@ -571,6 +646,8 @@ async function generateInventoryLookup(input: InventoryLookupInput): Promise<Inv
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  if (timeoutMs <= 0) return promise;
+
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -754,7 +831,7 @@ function normalizeRecommendationReason(text: string): string {
 function findInventoryItem(productOrSku: string, store: string): RetailInventoryItem | undefined {
   const query = productOrSku.toLowerCase();
   const normalizedStore = store.toLowerCase();
-  return [...generatedInventory.values(), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find((item) => {
+  return [...Array.from(generatedInventory.values()), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find((item) => {
     const matchesProduct =
       item.sku.toLowerCase() === query ||
       item.name.toLowerCase().includes(query) ||
@@ -765,7 +842,7 @@ function findInventoryItem(productOrSku: string, store: string): RetailInventory
 }
 
 function findAvailableInventoryItemBySku(sku: string): RetailInventoryItem | undefined {
-  return [...generatedInventory.values(), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find(
+  return [...Array.from(generatedInventory.values()), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find(
     (item) => item.sku === sku && item.status !== "out_of_stock" && item.quantity > 0
   );
 }
