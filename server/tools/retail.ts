@@ -440,7 +440,7 @@ export async function recommend_gift_accessory(args: Record<string, any>): Promi
   return {
     success: true,
     result: accessory
-      ? `Recommended add-on: ${accessory.name}. ${recommendation.reason}`
+      ? `Retrieving from long term memory. Looking at past conversations: Recommend ${accessory.name} because ${recommendation.reason}. Source: ${recommendation.source}. Suggested wording: ${recommendation.suggestedWording}`
       : "No accessory recommendation is available for this product from the current accessory inventory.",
     data: {
       product,
