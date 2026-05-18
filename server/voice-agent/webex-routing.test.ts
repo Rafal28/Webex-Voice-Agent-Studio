@@ -4,16 +4,16 @@ import { buildConfiguredWebexMessageArgs, getConfiguredWebexRoomId } from "./web
 
 assert.equal(
   getConfiguredWebexRoomId({
-    WEBEX_SPACE_ID: " test-clus-room ",
+    WEBEX_SPACE_ID: " configured-manager-room ",
   } as NodeJS.ProcessEnv),
-  "test-clus-room"
+  "configured-manager-room"
 );
 
 assert.deepEqual(
   buildConfiguredWebexMessageArgs("store manager summary", {
-    WEBEX_SPACE_ID: "test-clus-room",
+    WEBEX_SPACE_ID: "configured-manager-room",
   } as NodeJS.ProcessEnv),
-  { message: "store manager summary", roomId: "test-clus-room" }
+  { message: "store manager summary", roomId: "configured-manager-room" }
 );
 
 assert.deepEqual(

@@ -183,7 +183,7 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `DATABASE_URL` | **Yes** | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | Strongly recommended | TTS, chat, prompt generation |
 | `WEBEX_ACCESS_TOKEN` | For Webex features | Server-owned bot or personal access token |
-| `WEBEX_SPACE_ID` | Webex room for demo | Predefined manager room used for store-manager summaries, for example the Test CLUS space |
+| `WEBEX_SPACE_ID` | Webex room for demo | Configured manager room used for store-manager summaries |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |
 | `DEEPGRAM_PROJECT_ID` | For voice input | Deepgram project |
 | `TWILIO_ACCOUNT_SID` | For Voice | Twilio Account SID |
@@ -320,7 +320,7 @@ The app uses a static bearer token for Webex API access. No OAuth flow — confi
 2. Log in with your Webex account
 3. Copy the displayed personal access token
 4. Set as `WEBEX_ACCESS_TOKEN`
-5. Set `WEBEX_SPACE_ID` to the Test CLUS Webex space
+5. Set `WEBEX_SPACE_ID` to the manager-facing Webex space
 
 Good for quick testing. Token expires after 12 hours.
 
@@ -331,7 +331,7 @@ Good for quick testing. Token expires after 12 hours.
 3. Fill in name, username, icon, description
 4. Copy the **Bot Access Token** (shown once — save immediately)
 5. Set as `WEBEX_ACCESS_TOKEN`
-6. Set `WEBEX_SPACE_ID` to the Test CLUS Webex space
+6. Set `WEBEX_SPACE_ID` to the manager-facing Webex space
 7. Add the bot to any existing Webex spaces you want the agent to access
 
 Bot tokens never expire. The bot can only see rooms it has been invited to.
@@ -340,7 +340,7 @@ Bot tokens never expire. The bot can only see rooms it has been invited to.
 
 For demo testers, do not distribute Webex access tokens. Configure `WEBEX_ACCESS_TOKEN` and `WEBEX_SPACE_ID` once on the server for the predefined manager room.
 
-The setup page configures only the customer email used when email confirmation delivery is selected. It does not create Webex rooms, add users to Webex rooms, or change the predefined Test CLUS manager space. SMS remains the default customer confirmation path when Twilio SMS is configured.
+The setup page configures only the customer email used when email confirmation delivery is selected. It does not create Webex rooms, add users to Webex rooms, or change the configured manager space. SMS remains the default customer confirmation path when Twilio SMS is configured.
 
 Post-call store-manager summaries use `WEBEX_SPACE_ID`. Customer reservation confirmations are sent only through configured email or approved SMS, otherwise the app records a successful simulated delivery for demo continuity.
 

@@ -23,11 +23,11 @@ try {
 
   const managerResult = await message({
     message: "store manager summary",
-    roomId: "test-clus-room",
+    roomId: "explicit-room-id",
   });
   assert.equal(managerResult.success, true);
 
-  assert.deepEqual(sentRooms, ["active-demo-room", "test-clus-room"]);
+  assert.deepEqual(sentRooms, ["active-demo-room", "explicit-room-id"]);
 } finally {
   globalThis.fetch = originalFetch;
 }
