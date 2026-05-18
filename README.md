@@ -183,7 +183,8 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `DATABASE_URL` | **Yes** | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | Strongly recommended | TTS, chat, prompt generation |
 | `WEBEX_ACCESS_TOKEN` | For Webex features | Server-owned bot or personal access token |
-| `WEBEX_SPACE_ID` | Optional Webex fallback | Default room used before `/demo-setup` selects a tester room |
+| `WEBEX_SPACE_ID` | Optional Webex fallback | Default Webex room used before `/demo-setup` selects a tester room |
+| `DEMO_WEBEX_SPACE_ID` | Optional Webex room | Predefined room for post-call reservation confirmations and store-manager summaries, for example the test CLUS room |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |
 | `DEEPGRAM_PROJECT_ID` | For voice input | Deepgram project |
 | `TWILIO_ACCOUNT_SID` | For Voice | Twilio Account SID |
@@ -327,8 +328,9 @@ Good for quick testing. Token expires after 12 hours.
 3. Fill in name, username, icon, description
 4. Copy the **Bot Access Token** (shown once — save immediately)
 5. Set as `WEBEX_ACCESS_TOKEN`
-6. Optionally set `WEBEX_SPACE_ID` to a fallback store-manager space
-7. Add the bot to any existing Webex spaces you want the agent to access
+6. Optionally set `WEBEX_SPACE_ID` to a fallback Webex space
+7. Optionally set `DEMO_WEBEX_SPACE_ID` if post-call reservation confirmations and manager summaries should always go to a predefined room such as test CLUS
+8. Add the bot to any existing Webex spaces you want the agent to access
 
 Bot tokens never expire. The bot can only see rooms it has been invited to.
 
@@ -336,7 +338,9 @@ Bot tokens never expire. The bot can only see rooms it has been invited to.
 
 For demo testers, do not distribute Webex access tokens. Configure `WEBEX_ACCESS_TOKEN` once on the server, then open `/demo-setup` and enter the tester's Webex email.
 
-The setup page creates or reuses a room named `Cisco Live Voice Agent Demo - <webex-email>`, adds that Webex user, posts a smoke message, and makes that room the active target for reservation confirmations.
+The setup page creates or reuses a room named `Cisco Live Voice Agent Demo - <webex-email>`, adds that Webex user, posts a smoke message, and makes that room the active target for general Webex sends.
+
+Post-call reservation confirmations and store-manager summaries default to `DEMO_WEBEX_SPACE_ID` when set, otherwise to `WEBEX_SPACE_ID`. This keeps event-facing messages in the predefined demo room even if `/demo-setup` was used to test another Webex email.
 
 ### What It Enables
 

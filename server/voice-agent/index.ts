@@ -9,6 +9,7 @@ import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
+import { buildDemoWebexMessageArgs } from "./webex-routing";
 
 const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
 const BROWSER_AUDIO_ECHO_GUARD_MS = 350;
@@ -1369,7 +1370,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", { message });
+      const result = await executeTool("webex_message", buildDemoWebexMessageArgs(message));
       sendTwilioMonitorEvent(monitorAgentId, {
         type: "toolCallCompleted",
         agentId: monitorAgentId,
@@ -1417,9 +1418,10 @@ ${startupRetailContext}`;
       },
       timestamp: Date.now(),
     });
-    const result = await executeTool("webex_message", {
-      message: formatReservationConfirmationMessage(latestReservation),
-    });
+    const result = await executeTool(
+      "webex_message",
+      buildDemoWebexMessageArgs(formatReservationConfirmationMessage(latestReservation))
+    );
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
@@ -2334,7 +2336,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", { message });
+      const result = await executeTool("webex_message", buildDemoWebexMessageArgs(message));
       sendEvent({
         type: "toolCallCompleted",
         toolName: "retail_store_manager_summary",
@@ -2379,9 +2381,10 @@ ${startupRetailContext}`;
       },
       timestamp: Date.now(),
     });
-    const result = await executeTool("webex_message", {
-      message: formatReservationConfirmationMessage(latestReservation),
-    });
+    const result = await executeTool(
+      "webex_message",
+      buildDemoWebexMessageArgs(formatReservationConfirmationMessage(latestReservation))
+    );
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_order_confirmation",
