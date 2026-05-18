@@ -1563,13 +1563,15 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   async function getTwilioAgentId(req: ExpressRequest): Promise<string> {
     const queryAgentId = Array.isArray(req.query?.agentId) ? req.query.agentId[0] : req.query?.agentId;
-    const requestedAgentId = String(req.body?.agentId || queryAgentId || "default").trim();
-    if (!requestedAgentId || requestedAgentId === "default") return "default";
+    const requestedAgentId = String(req.body?.agentId || queryAgentId || "").trim();
+    const defaultAgent = await storage.getAgent(1);
+    if (!requestedAgentId || requestedAgentId === "default") {
+      return defaultAgent ? "1" : "default";
+    }
 
     const numericAgentId = Number.parseInt(requestedAgentId, 10);
     if (!Number.isFinite(numericAgentId)) return requestedAgentId;
 
-    const defaultAgent = await storage.getAgent(1);
     if (defaultAgent) return "1";
 
     const requestedAgent = await storage.getAgent(numericAgentId);

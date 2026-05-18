@@ -36,6 +36,8 @@ export class OpenAIRealtimeClient extends EventEmitter {
   private apiKey: string;
   private config: RealtimeSessionConfig;
   private emittedAssistantTranscriptInResponse = false;
+  private responseActive = false;
+  private createResponseAfterActiveResponse = false;
 
   constructor(apiKey: string, config: RealtimeSessionConfig) {
     super();
@@ -117,6 +119,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
         break;
       case "response.created":
         this.emittedAssistantTranscriptInResponse = false;
+        this.responseActive = true;
         this.emit("responseStarted", event.response);
         break;
       case "input_audio_buffer.speech_started":
@@ -176,10 +179,17 @@ export class OpenAIRealtimeClient extends EventEmitter {
         });
         break;
       case "response.done":
+        if (!this.emittedAssistantTranscriptInResponse) {
+          this.emitAssistantTranscriptDone(extractAssistantTranscriptFromResponse(event.response));
+        }
+        this.responseActive = false;
         this.emit("responseDone", event.response);
+        this.flushPendingResponseCreate();
         break;
       case "response.cancelled":
+        this.responseActive = false;
         this.emit("responseCancelled");
+        this.flushPendingResponseCreate();
         break;
       case "error":
         if (isBenignRealtimeError(event.error)) return;
@@ -214,7 +224,13 @@ export class OpenAIRealtimeClient extends EventEmitter {
       type: "conversation.item.create",
       item: { type: "function_call_output", call_id: callId, output },
     });
-    if (createResponse) {
+    if (!createResponse) {
+      return;
+    }
+
+    if (this.responseActive) {
+      this.createResponseAfterActiveResponse = true;
+    } else {
       this.send({ type: "response.create" });
     }
   }
@@ -229,6 +245,12 @@ export class OpenAIRealtimeClient extends EventEmitter {
     if (!text?.trim()) return;
     this.emittedAssistantTranscriptInResponse = true;
     this.emit("assistantTranscriptDone", text);
+  }
+
+  private flushPendingResponseCreate(): void {
+    if (!this.createResponseAfterActiveResponse || this.responseActive) return;
+    this.createResponseAfterActiveResponse = false;
+    this.send({ type: "response.create" });
   }
 
   close(): void {
