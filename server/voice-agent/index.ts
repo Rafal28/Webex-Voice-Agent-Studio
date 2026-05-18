@@ -25,6 +25,7 @@ const BROWSER_END_CALL_FALLBACK_MS = 7000;
 const REALTIME_TRANSCRIPTION_LANGUAGE = "en";
 const REALTIME_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const TRANSCRIPT_CORRECTION_MODEL = process.env.OPENAI_TRANSCRIPT_CORRECTION_MODEL || "gpt-4o-mini";
+const DEMO_ENABLE_SMS = process.env.DEMO_ENABLE_SMS === "true";
 const RETAIL_VOICE_PRODUCT_TERMS = new Set([
   "accessories",
   "airpods",
@@ -99,6 +100,14 @@ const VOICE_END_CALL_TOOL = {
 
 const SMS_SUMMARY_MAX_CHARS = 1200;
 const STORE_MANAGER_WEBEX_TEMPLATE = "store_manager_webex_message";
+
+function canUseDemoSms(): boolean {
+  return DEMO_ENABLE_SMS && isTwilioSmsConfigured();
+}
+
+function getDemoConfirmationChannel(): "webex" | "sms" {
+  return process.env.DEMO_CONFIRMATION_CHANNEL === "sms" && canUseDemoSms() ? "sms" : "webex";
+}
 
 interface CallTranscriptEntry {
   role: "Customer" | "Assistant";
@@ -192,6 +201,17 @@ function getRecommendedUpsell(data: unknown): string {
   return String(value.recommendation?.name || value.recommendedUpsell || "").trim();
 }
 
+function formatReservationConfirmationMessage(reservation: RetailReservationDetails): string {
+  return [
+    "## Reservation confirmed",
+    "",
+    `**Customer:** ${reservation.customerName}`,
+    `**Item:** ${reservation.itemName}`,
+    `**Pickup:** ${reservation.store}, ${reservation.pickupTime}`,
+    `**Reference:** ${reservation.reservationId}`,
+  ].join("\n");
+}
+
 function formatJsonForInstructions(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
@@ -275,14 +295,14 @@ async function summarizeCallForStoreManager(transcriptText: string): Promise<Sto
 function buildTwilioCallInstructions(
   baseInstructions: string,
   callerPhone: string,
-  canSendSmsToCaller: boolean,
+  canSendCallerSummarySms: boolean,
   returningCallerName?: string
 ): string {
-  const summaryInstructions = canSendSmsToCaller
+  const summaryInstructions = canSendCallerSummarySms
     ? `Before the call ends, when the caller's main need appears handled or they indicate they are done, ask once: "Would you like me to text a brief summary of our discussion to this number?" If and only if the caller clearly agrees, call twilio_sms_caller_summary with a concise summary and next steps. Do not ask the caller to repeat their phone number. Do not send a summary without explicit consent.`
-    : `If the caller asks for an SMS or a call summary by text, explain that SMS delivery is not configured for this call.`;
+    : `Do not offer SMS or text-message delivery in this demo. If the caller asks for SMS or a text message, explain that this demo sends confirmations to the Webex space instead.`;
   const callerIdentityInstructions = returningCallerName
-    ? `The PSTN caller ID matched returning customer ${returningCallerName}. Treat this caller as ${returningCallerName} for this demo call. You may greet them by first name once in the opening greeting. Do not ask for SMS verification.`
+    ? `The PSTN caller ID matched returning customer ${returningCallerName}. Treat this caller as ${returningCallerName} for this demo call. You may greet them by first name once in the opening greeting. Do not ask for phone verification.`
     : `The caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
 
   return `Always respond in English unless the caller explicitly asks for another language.
@@ -295,9 +315,9 @@ Never end the call because an item is unavailable, unsupported, or not in invent
 ${callerIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a confirmation text will be sent to the phone number on this call, and give the reservation reference out loud. This order confirmation text is part of the reservation flow and is separate from the optional call-summary text.
+After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent to the Webex demo space, and give the reservation reference out loud. This Webex confirmation is part of the reservation flow.
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
-If SMS sending fails, do not mention provider, regional, permission, API, or configuration errors. Say SMS is having issues right now and provide the reservation or order reference verbally.
+If confirmation delivery fails, do not mention provider, permission, API, or configuration errors. Say the confirmation is having issues right now and provide the reservation reference verbally.
 If the caller is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
 
 ${baseInstructions}
@@ -305,13 +325,13 @@ ${baseInstructions}
 CRITICAL CALL CONTEXT:
 - The caller is calling from ${callerPhone || "an unavailable phone number"}.
 - ${callerIdentityInstructions}
-- After the call, the server deterministically sends Order Confirmation SMS and Store Manager Summary when a reservation exists.
+- After the call, the server deterministically sends the reservation confirmation and Store Manager Summary to Webex when a reservation exists.
 - ${summaryInstructions}`;
 }
 
 function buildBrowserCallInstructions(baseInstructions: string, returningCallerName?: string): string {
   const browserIdentityInstructions = returningCallerName
-    ? `This browser demo session is for returning customer ${returningCallerName}. Treat this caller as ${returningCallerName}. You may greet them by first name once in the opening greeting. Do not ask for SMS verification.`
+    ? `This browser demo session is for returning customer ${returningCallerName}. Treat this caller as ${returningCallerName}. You may greet them by first name once in the opening greeting. Do not ask for phone verification.`
     : `The browser caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
 
   return `Always respond in English unless the user explicitly asks for another language.
@@ -322,10 +342,10 @@ Do not repeat the opening greeting after the first assistant turn.
 ${browserIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a confirmation text will be sent, and give the reservation reference out loud. This order confirmation text is part of the reservation flow and is separate from the optional call-summary text.
+After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent to the Webex demo space, and give the reservation reference out loud. This Webex confirmation is part of the reservation flow.
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 For product, store, price, and inventory questions, answer normally.
-If SMS sending fails, do not mention provider, regional, permission, API, or configuration errors. Say SMS is having issues right now and provide the reservation or order reference verbally.
+If confirmation delivery fails, do not mention provider, permission, API, or configuration errors. Say the confirmation is having issues right now and provide the reservation reference verbally.
 If the user is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
 When the user clearly says goodbye, asks to end the call, asks to hang up, or says they do not need anything else, first say "Thanks for calling. Have a good rest of your day." Then call voice_end_call.
 Never end the call because an item is unavailable, unsupported, or not in inventory. Offer alternatives or ask one concise follow-up instead.
@@ -931,7 +951,7 @@ function handleTwilioSession(ws: WebSocket): void {
           : "Unknown";
         latestReservation = null;
         latestRecommendedUpsell = "";
-        const canSendSmsToCaller = callerPhone !== "Unknown" && isTwilioSmsConfigured();
+        const canSendCallerSummarySms = callerPhone !== "Unknown" && canUseDemoSms();
 
         if (agentId && agentId !== "default") {
           let resolvedAgentId = agentId;
@@ -964,21 +984,21 @@ function handleTwilioSession(ws: WebSocket): void {
         const returningCallerName = startupRetailContext ? "John" : undefined;
 
         instructions = buildRuntimeInstructions(instructions, agentName);
-        instructions = buildTwilioCallInstructions(instructions, callerPhone, canSendSmsToCaller, returningCallerName);
+        instructions = buildTwilioCallInstructions(instructions, callerPhone, canSendCallerSummarySms, returningCallerName);
         if (startupRetailContext) {
           instructions = `${instructions}
 
 # Trusted Returning Caller Context
 
-The PSTN caller ID matched a returning customer, so SMS verification is skipped for this demo call.
+The PSTN caller ID matched a returning customer, so phone verification is skipped for this demo call.
 Use this context when it helps the caller's request, but do not recite it immediately after greeting and do not mention lookup mechanics.
 
 ${startupRetailContext}`;
         }
 
         const tools = [
-          ...realtimeTools.filter((tool) => !(callerPhone !== "Unknown" && tool.name === "twilio_sms")),
-          ...(canSendSmsToCaller ? [TWILIO_CALLER_SUMMARY_TOOL] : []),
+          ...realtimeTools.filter((tool) => canUseDemoSms() || tool.name !== "twilio_sms"),
+          ...(canSendCallerSummarySms ? [TWILIO_CALLER_SUMMARY_TOOL] : []),
           VOICE_END_CALL_TOOL,
         ];
 
@@ -1201,15 +1221,6 @@ ${startupRetailContext}`;
               : rawResult;
             if (result.success && name === "retail_reserve_item") {
               latestReservation = getReservationDetails(result.data);
-              const reservationData = result.data as any;
-              if (reservationData?.confirmationSmsSent) {
-                sendTwilioMonitorEvent(monitorAgentId, {
-                  type: "smsSent",
-                  agentId: monitorAgentId,
-                  to: callerPhone !== "Unknown" ? callerPhone : RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone,
-                  timestamp: Date.now(),
-                });
-              }
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
@@ -1314,7 +1325,7 @@ ${startupRetailContext}`;
     callEndedSent = true;
     const endedAt = Date.now();
     void (async () => {
-      await sendOrderConfirmationSms();
+      await sendOrderConfirmation();
       await sendStoreManagerSummary(endedAt);
       sendTwilioMonitorEvent(monitorAgentId, {
         type: "callEnded",
@@ -1384,6 +1395,45 @@ ${startupRetailContext}`;
         timestamp: Date.now(),
       });
       console.error("[VoiceAgent/Twilio] Store manager Webex summary error:", error.message);
+    }
+  }
+
+  async function sendOrderConfirmation(): Promise<void> {
+    if (getDemoConfirmationChannel() === "sms") {
+      await sendOrderConfirmationSms();
+      return;
+    }
+    await sendOrderConfirmationWebex();
+  }
+
+  async function sendOrderConfirmationWebex(): Promise<void> {
+    if (!latestReservation) return;
+    sendTwilioMonitorEvent(monitorAgentId, {
+      type: "toolCallStarted",
+      agentId: monitorAgentId,
+      toolName: "retail_order_confirmation",
+      args: {
+        reservationId: latestReservation.reservationId,
+      },
+      timestamp: Date.now(),
+    });
+    const result = await executeTool("webex_message", {
+      message: formatReservationConfirmationMessage(latestReservation),
+    });
+    sendTwilioMonitorEvent(monitorAgentId, {
+      type: "toolCallCompleted",
+      agentId: monitorAgentId,
+      toolName: "retail_order_confirmation",
+      success: result.success,
+      result: result.success ? "Reservation confirmation sent to Webex." : undefined,
+      error: result.error,
+      durationMs: result.durationMs,
+      timestamp: Date.now(),
+    });
+    if (result.success) {
+      console.log("[VoiceAgent/Twilio] Post-call Webex confirmation sent", { callSid });
+    } else {
+      console.error("[VoiceAgent/Twilio] Post-call Webex confirmation failed:", result.error);
     }
   }
 
@@ -1813,7 +1863,10 @@ function handleBrowserSession(ws: WebSocket): void {
           }
         }
 
-        const tools = [...realtimeTools, VOICE_END_CALL_TOOL];
+        const tools = [
+          ...realtimeTools.filter((tool) => canUseDemoSms() || tool.name !== "twilio_sms"),
+          VOICE_END_CALL_TOOL,
+        ];
 
         startupRetailContext = await runStartupRetailLookups();
         const returningCallerName = startupRetailContext ? "John" : undefined;
@@ -1825,7 +1878,7 @@ function handleBrowserSession(ws: WebSocket): void {
 
 # Trusted Browser Demo Caller Context
 
-This browser demo call is for returning customer John, so SMS verification is skipped to match the PSTN demo experience.
+This browser demo call is for returning customer John, so phone verification is skipped to match the PSTN demo experience.
 Use this context when it helps the caller's request, but do not recite it immediately after greeting and do not mention lookup mechanics.
 
 ${startupRetailContext}`;
@@ -2115,14 +2168,6 @@ ${startupRetailContext}`;
               : rawResult;
             if (result.success && name === "retail_reserve_item") {
               latestReservation = getReservationDetails(result.data);
-              const reservationData = result.data as any;
-              if (reservationData?.confirmationSmsSent) {
-                sendEvent({
-                  type: "smsSent",
-                  to: RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone,
-                  timestamp: Date.now(),
-                });
-              }
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
@@ -2250,7 +2295,7 @@ ${startupRetailContext}`;
     browserCallEndedSent = true;
     const endedAt = Date.now();
     await Promise.all([
-      sendBrowserOrderConfirmationSms(),
+      sendBrowserOrderConfirmation(),
       sendBrowserStoreManagerSummary(endedAt),
     ]);
     sendEvent({ type: "callEnded", reason, timestamp: Date.now() });
@@ -2313,6 +2358,43 @@ ${startupRetailContext}`;
         timestamp: Date.now(),
       });
       console.error("[VoiceAgent/Browser] Store manager Webex summary error:", error.message);
+    }
+  }
+
+  async function sendBrowserOrderConfirmation(): Promise<void> {
+    if (getDemoConfirmationChannel() === "sms") {
+      await sendBrowserOrderConfirmationSms();
+      return;
+    }
+    await sendBrowserOrderConfirmationWebex();
+  }
+
+  async function sendBrowserOrderConfirmationWebex(): Promise<void> {
+    if (!latestReservation) return;
+    sendEvent({
+      type: "toolCallStarted",
+      toolName: "retail_order_confirmation",
+      args: {
+        reservationId: latestReservation.reservationId,
+      },
+      timestamp: Date.now(),
+    });
+    const result = await executeTool("webex_message", {
+      message: formatReservationConfirmationMessage(latestReservation),
+    });
+    sendEvent({
+      type: "toolCallCompleted",
+      toolName: "retail_order_confirmation",
+      success: result.success,
+      result: result.success ? "Reservation confirmation sent to Webex." : undefined,
+      error: result.error,
+      durationMs: result.durationMs,
+      timestamp: Date.now(),
+    });
+    if (result.success) {
+      console.log("[VoiceAgent/Browser] Post-call Webex confirmation sent");
+    } else {
+      console.error("[VoiceAgent/Browser] Post-call Webex confirmation failed:", result.error);
     }
   }
 
