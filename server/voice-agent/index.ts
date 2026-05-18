@@ -8,6 +8,7 @@ import { CallSession, type CallLifecycleState } from "./call-session";
 import { mapRealtimeVoice } from "./voice";
 import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
+import { createRetailToolSession, type ToolExecutionContext } from "../tools/tool-context";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 
@@ -902,6 +903,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
+  let toolContext: ToolExecutionContext = { retail: createRetailToolSession() };
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -924,6 +926,7 @@ function handleTwilioSession(ws: WebSocket): void {
           clearTimeout(endCallTimer);
           endCallTimer = null;
         }
+        toolContext = { retail: createRetailToolSession() };
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
         let voice = "alloy";
@@ -1208,7 +1211,7 @@ ${startupRetailContext}`;
             emitTwilioCallStateChange(callSession.beginTool(name));
             const rawResult = name === TWILIO_CALLER_SUMMARY_TOOL.name
               ? await sendCallerSummarySms(args, callerPhone, monitorAgentId)
-              : await executeTool(name, args);
+              : await executeTool(name, args, toolContext);
             const result = name === "twilio_sms"
               ? sanitizeSmsToolResult(rawResult, latestReservation)
               : rawResult;
@@ -1387,7 +1390,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", { message });
+      const result = await executeTool("webex_message", { message }, toolContext);
       sendTwilioMonitorEvent(monitorAgentId, {
         type: "toolCallCompleted",
         agentId: monitorAgentId,
@@ -1431,7 +1434,7 @@ ${startupRetailContext}`;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
     );
-    const rawResult = await executeTool("twilio_sms", { to, body });
+    const rawResult = await executeTool("twilio_sms", { to, body }, toolContext);
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
@@ -1552,7 +1555,7 @@ ${startupRetailContext}`;
     }
 
     const body = truncateForSms(`Summary of our call: ${summary}`);
-    const rawResult = await executeTool("twilio_sms", { to: callerPhone, body });
+    const rawResult = await executeTool("twilio_sms", { to: callerPhone, body }, toolContext);
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     if (result.success) {
       sendTwilioMonitorEvent(agentId, {
@@ -1690,7 +1693,7 @@ ${startupRetailContext}`;
       args: lookupArgs,
       timestamp: Date.now(),
     });
-    const userLookup = await executeTool("retail_user_lookup", lookupArgs);
+    const userLookup = await executeTool("retail_user_lookup", lookupArgs, toolContext);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
@@ -1718,7 +1721,7 @@ ${startupRetailContext}`;
       args: historyArgs,
       timestamp: Date.now(),
     });
-    const historyLookup = await executeTool("retail_user_history_lookup", historyArgs);
+    const historyLookup = await executeTool("retail_user_history_lookup", historyArgs, toolContext);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
@@ -1741,7 +1744,7 @@ ${startupRetailContext}`;
       args: contextArgs,
       timestamp: Date.now(),
     });
-    const customerContext = await executeTool("retail_get_customer_context", contextArgs);
+    const customerContext = await executeTool("retail_get_customer_context", contextArgs, toolContext);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
@@ -1804,6 +1807,7 @@ function handleBrowserSession(ws: WebSocket): void {
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
+  let browserToolContext: ToolExecutionContext = { retail: createRetailToolSession() };
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw, isBinary) => {
@@ -1836,6 +1840,7 @@ function handleBrowserSession(ws: WebSocket): void {
           clearTimeout(endCallTimer);
           endCallTimer = null;
         }
+        browserToolContext = { retail: createRetailToolSession() };
         latestReservation = null;
         latestRecommendedUpsell = "";
         startupRetailContext = "";
@@ -2151,7 +2156,7 @@ ${startupRetailContext}`;
               timestamp: Date.now(),
             });
             sendBrowserCallStateChanged(browserCallSession.beginTool(name));
-            const rawResult = await executeTool(name, args);
+            const rawResult = await executeTool(name, args, browserToolContext);
             const result = name === "twilio_sms"
               ? sanitizeSmsToolResult(rawResult, latestReservation)
               : rawResult;
@@ -2337,7 +2342,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", { message });
+      const result = await executeTool("webex_message", { message }, browserToolContext);
       sendEvent({
         type: "toolCallCompleted",
         toolName: "retail_store_manager_summary",
@@ -2378,7 +2383,7 @@ ${startupRetailContext}`;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
     );
-    const rawResult = await executeTool("twilio_sms", { to, body });
+    const rawResult = await executeTool("twilio_sms", { to, body }, browserToolContext);
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     sendEvent({
       type: "toolCallCompleted",
@@ -2504,7 +2509,7 @@ ${startupRetailContext}`;
       args: lookupArgs,
       timestamp: Date.now(),
     });
-    const userLookup = await executeTool("retail_user_lookup", lookupArgs);
+    const userLookup = await executeTool("retail_user_lookup", lookupArgs, browserToolContext);
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_user_lookup",
@@ -2529,7 +2534,7 @@ ${startupRetailContext}`;
       args: historyArgs,
       timestamp: Date.now(),
     });
-    const historyLookup = await executeTool("retail_user_history_lookup", historyArgs);
+    const historyLookup = await executeTool("retail_user_history_lookup", historyArgs, browserToolContext);
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_user_history_lookup",
@@ -2548,7 +2553,7 @@ ${startupRetailContext}`;
       args: contextArgs,
       timestamp: Date.now(),
     });
-    const customerContext = await executeTool("retail_get_customer_context", contextArgs);
+    const customerContext = await executeTool("retail_get_customer_context", contextArgs, browserToolContext);
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_get_customer_context",
