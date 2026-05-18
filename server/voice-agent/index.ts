@@ -310,8 +310,8 @@ function buildTwilioCallInstructions(
   const summaryInstructions = canSendCallerSummarySms
     ? `Before the call ends, when the caller's main need appears handled or they indicate they are done, ask once: "Would you like me to text a brief summary of our discussion to this number?" If and only if the caller clearly agrees, call twilio_sms_caller_summary with a concise summary and next steps. Do not ask the caller to repeat their phone number. Do not send a summary without explicit consent.`
     : confirmationSpokenRoute === "sms"
-      ? `Do not offer an optional call-summary text message in this demo. Reservation confirmations use the configured SMS route after a reservation is created.`
-      : `Do not offer SMS or text-message delivery in this demo. Reservation confirmations use the configured email route after a reservation is created.`;
+      ? `Do not offer an optional call-summary text message in this demo. For reservation confirmations, use the text-message confirmation wording after a reservation is created.`
+      : `Do not offer SMS or text-message delivery in this demo. For reservation confirmations, use the email confirmation wording after a reservation is created.`;
   const callerIdentityInstructions = returningCallerName
     ? `The PSTN caller ID matched returning customer ${returningCallerName}. Treat this caller as ${returningCallerName} for this demo call. You may greet them by first name once in the opening greeting. Do not ask for phone verification.`
     : `The caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;

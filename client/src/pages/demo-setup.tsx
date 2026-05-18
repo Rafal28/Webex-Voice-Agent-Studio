@@ -60,7 +60,7 @@ export default function DemoSetup() {
             <div>
               <h2 className="text-lg font-semibold">Set Customer Email</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                This configures the customer email used when email delivery is selected. SMS remains the default confirmation path.
+                This configures the customer email used when email delivery is selected. Spoken confirmation wording defaults to SMS.
               </p>
             </div>
 

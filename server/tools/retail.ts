@@ -510,12 +510,12 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     confirmationDelivery: {
       channel: "customer",
       status: "will_send_after_call",
-      message: `A customer confirmation will be prepared after the call. Reservation reference RSV-430-JOHN.`,
+      message: `Customer confirmation will be handled after the call. Reservation reference RSV-430-JOHN.`,
     },
   };
   return {
     success: true,
-    result: `${item.name} is reserved for ${customerName} at ${store} for ${pickupTime}. A customer confirmation will be prepared after the call. Reservation reference RSV-430-JOHN.`,
+    result: `${item.name} is reserved for ${customerName} at ${store} for ${pickupTime}. Customer confirmation will be handled after the call. Reservation reference RSV-430-JOHN.`,
     data: reservation,
   };
 }

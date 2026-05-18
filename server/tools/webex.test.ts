@@ -18,7 +18,7 @@ globalThis.fetch = (async (_input, init) => {
 }) as typeof fetch;
 
 try {
-  const defaultResult = await message({ message: "reservation confirmation" });
+  const defaultResult = await message({ message: "general Webex message" });
   assert.equal(defaultResult.success, true);
 
   const managerResult = await message({
