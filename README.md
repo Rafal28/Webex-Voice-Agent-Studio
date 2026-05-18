@@ -186,10 +186,12 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `WEBEX_SPACE_ID` | For Webex messages | Default space used when no UI override is saved |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |
 | `DEEPGRAM_PROJECT_ID` | For voice input | Deepgram project |
-| `TWILIO_ACCOUNT_SID` | For SMS/Voice | Twilio Account SID |
-| `TWILIO_AUTH_TOKEN` | For SMS/Voice | Twilio Auth Token |
-| `TWILIO_PHONE_NUMBER` | For SMS/Voice | e.g. `+15551234567` |
-| `APP_BASE_URL` | For SMS/Voice | Public URL for Twilio webhooks |
+| `TWILIO_ACCOUNT_SID` | For Voice | Twilio Account SID |
+| `TWILIO_AUTH_TOKEN` | For Voice | Twilio Auth Token |
+| `TWILIO_PHONE_NUMBER` | For Voice | e.g. `+15551234567` |
+| `APP_BASE_URL` | For Voice | Public URL for Twilio webhooks |
+| `DEMO_ENABLE_SMS` | Optional | Defaults to `false`; keep disabled unless the environment is approved for SMS compliance |
+| `DEMO_CONFIRMATION_CHANNEL` | Optional | Defaults to `webex`; reservation confirmations go to Webex for the Cisco Live demo |
 | `TWILIO_PRECONNECT_GREETING` | Optional | Pre-stream Twilio greeting text. Requires `TWILIO_PRECONNECT_GREETING_ENABLED=true`; disabled by default to avoid mixing Twilio TTS with the Realtime agent voice |
 | `TWILIO_VOICE_GREETING` | Optional | Custom voice greeting message |
 | `TWILIO_VOICE_FAREWELL` | Optional | Custom post-recording farewell |
