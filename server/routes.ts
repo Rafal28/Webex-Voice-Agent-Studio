@@ -15,6 +15,7 @@ import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { getWebexProfile, updateWebexProfile } from "./webex-profile";
 import { setupDemoCustomerSession } from "./demo-customer-setup";
+import { getDemoWhatsAppOptInConfig } from "./demo-whatsapp-opt-in";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -872,6 +873,10 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       }
       res.status(500).json({ error: error.message || "Failed to set up customer confirmation" });
     }
+  });
+
+  app.get("/api/demo/whatsapp-opt-in", async (_req, res) => {
+    res.json(getDemoWhatsAppOptInConfig());
   });
 
   const syncRequestSchema = z.object({
