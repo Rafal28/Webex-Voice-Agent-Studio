@@ -113,14 +113,16 @@ function canUseDemoSms(): boolean {
   return DEMO_ENABLE_SMS && isTwilioSmsConfigured();
 }
 
+function canUseDemoWhatsApp(): boolean {
+  return isTwilioWhatsAppConfigured();
+}
+
 function getDemoConfirmationChannel(): ReservationDeliveryChannel {
   return resolveReservationDeliveryChannel(process.env.DEMO_CONFIRMATION_CHANNEL);
 }
 
 function getDemoConfirmationSpokenRoute(): ReservationSpokenDeliveryRoute {
-  return process.env.DEMO_CONFIRMATION_CHANNEL?.trim().toLowerCase() === "email"
-    ? "email"
-    : "sms";
+  return getDemoConfirmationChannel();
 }
 
 interface CallTranscriptEntry {
@@ -161,6 +163,14 @@ function isTwilioSmsConfigured(): boolean {
     process.env.TWILIO_ACCOUNT_SID &&
     process.env.TWILIO_AUTH_TOKEN &&
     (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID)
+  );
+}
+
+function isTwilioWhatsAppConfigured(): boolean {
+  return Boolean(
+    process.env.TWILIO_ACCOUNT_SID &&
+    process.env.TWILIO_AUTH_TOKEN &&
+    process.env.TWILIO_WHATSAPP_FROM
   );
 }
 
@@ -306,7 +316,9 @@ function buildTwilioCallInstructions(
     ? `Before the call ends, when the caller's main need appears handled or they indicate they are done, ask once: "Would you like me to text a brief summary of our discussion to this number?" If and only if the caller clearly agrees, call twilio_sms_caller_summary with a concise summary and next steps. Do not ask the caller to repeat their phone number. Do not send a summary without explicit consent.`
     : confirmationSpokenRoute === "sms"
       ? `Do not offer an optional call-summary text message in this demo. For reservation confirmations, use the text-message confirmation wording after a reservation is created.`
-      : `Do not offer SMS or text-message delivery in this demo. For reservation confirmations, use the email confirmation wording after a reservation is created.`;
+      : confirmationSpokenRoute === "whatsapp"
+        ? `Do not offer an optional call-summary text message in this demo. For reservation confirmations, use the WhatsApp confirmation wording after a reservation is created.`
+        : `Do not offer SMS or text-message delivery in this demo. For reservation confirmations, use the email confirmation wording after a reservation is created.`;
   const callerIdentityInstructions = returningCallerName
     ? `The PSTN caller ID matched returning customer ${returningCallerName}. Treat this caller as ${returningCallerName} for this demo call. You may greet them by first name once in the opening greeting. Do not ask for phone verification.`
     : `The caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
@@ -331,7 +343,7 @@ ${baseInstructions}
 CRITICAL CALL CONTEXT:
 - The caller is calling from ${callerPhone || "an unavailable phone number"}.
 - ${callerIdentityInstructions}
-- After the call, the server deterministically sends or simulates the customer reservation confirmation and sends the Store Manager Summary to Webex when a reservation exists.
+- After the call, the server deterministically sends or records the customer reservation confirmation and sends the Store Manager Summary to Webex when a reservation exists.
 - ${summaryInstructions}`;
 }
 
@@ -476,6 +488,13 @@ function publicSmsFailureMessage(reservation?: RetailReservationDetails | null):
   return `I'm having issues sending SMS right now.${reference}`;
 }
 
+function publicWhatsAppFailureMessage(reservation?: RetailReservationDetails | null): string {
+  const reference = reservation
+    ? ` The reservation is still confirmed: ${reservation.itemName} at ${reservation.store} for ${reservation.pickupTime}. Reference ${reservation.reservationId}.`
+    : "";
+  return `I'm having issues sending WhatsApp right now.${reference}`;
+}
+
 function sanitizeSmsToolResult(
   result: ToolExecutionResult,
   reservation?: RetailReservationDetails | null
@@ -487,6 +506,29 @@ function sanitizeSmsToolResult(
     durationMs: result.durationMs,
     data: {
       smsUnavailable: true,
+      reservation: reservation
+        ? {
+            reservationId: reservation.reservationId,
+            itemName: reservation.itemName,
+            store: reservation.store,
+            pickupTime: reservation.pickupTime,
+          }
+        : undefined,
+    },
+  };
+}
+
+function sanitizeWhatsAppToolResult(
+  result: ToolExecutionResult,
+  reservation?: RetailReservationDetails | null
+): ToolExecutionResult {
+  if (result.success) return result;
+  return {
+    success: false,
+    error: publicWhatsAppFailureMessage(reservation),
+    durationMs: result.durationMs,
+    data: {
+      whatsappUnavailable: true,
       reservation: reservation
         ? {
             reservationId: reservation.reservationId,
@@ -1415,6 +1457,10 @@ ${startupRetailContext}`;
       await sendOrderConfirmationEmail();
       return;
     }
+    if (channel === "whatsapp") {
+      await sendOrderConfirmationWhatsApp();
+      return;
+    }
   }
 
   async function sendOrderConfirmationEmail(): Promise<void> {
@@ -1502,6 +1548,57 @@ ${startupRetailContext}`;
       console.log("[VoiceAgent/Twilio] Post-call customer SMS sent", { callSid });
     } else {
       console.error("[VoiceAgent/Twilio] Post-call customer SMS failed:", result.error);
+    }
+  }
+
+  async function sendOrderConfirmationWhatsApp(): Promise<void> {
+    if (!latestReservation) return;
+    sendTwilioMonitorEvent(monitorAgentId, {
+      type: "toolCallStarted",
+      agentId: monitorAgentId,
+      toolName: "retail_order_confirmation",
+      args: {
+        reservationId: latestReservation.reservationId,
+        channel: "whatsapp",
+      },
+      timestamp: Date.now(),
+    });
+    if (!canUseDemoWhatsApp()) {
+      sendTwilioMonitorEvent(monitorAgentId, {
+        type: "toolCallCompleted",
+        agentId: monitorAgentId,
+        toolName: "retail_order_confirmation",
+        success: false,
+        error: publicWhatsAppFailureMessage(latestReservation),
+        durationMs: 0,
+        timestamp: Date.now(),
+      });
+      console.error(
+        "[VoiceAgent/Twilio] Post-call customer WhatsApp skipped: WhatsApp is not configured",
+        { callSid }
+      );
+      return;
+    }
+    const to = callerPhone !== "Unknown" ? callerPhone : RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
+    const body = truncateForSms(
+      `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
+    );
+    const rawResult = await executeTool("twilio_whatsapp", { to, body });
+    const result = sanitizeWhatsAppToolResult(rawResult, latestReservation);
+    sendTwilioMonitorEvent(monitorAgentId, {
+      type: "toolCallCompleted",
+      agentId: monitorAgentId,
+      toolName: "retail_order_confirmation",
+      success: result.success,
+      result: result.success ? "Order Confirmation WhatsApp message sent to the customer." : undefined,
+      error: result.error,
+      durationMs: result.durationMs,
+      timestamp: Date.now(),
+    });
+    if (result.success) {
+      console.log("[VoiceAgent/Twilio] Post-call customer WhatsApp sent", { callSid });
+    } else {
+      console.error("[VoiceAgent/Twilio] Post-call customer WhatsApp failed:", result.error);
     }
   }
 
@@ -2399,6 +2496,10 @@ ${startupRetailContext}`;
       await sendBrowserOrderConfirmationEmail();
       return;
     }
+    if (channel === "whatsapp") {
+      await sendBrowserOrderConfirmationWhatsApp();
+      return;
+    }
   }
 
   async function sendBrowserOrderConfirmationEmail(): Promise<void> {
@@ -2475,6 +2576,53 @@ ${startupRetailContext}`;
       console.log("[VoiceAgent/Browser] Post-call customer SMS sent");
     } else {
       console.error("[VoiceAgent/Browser] Post-call customer SMS failed:", result.error);
+    }
+  }
+
+  async function sendBrowserOrderConfirmationWhatsApp(): Promise<void> {
+    if (!latestReservation) return;
+    sendEvent({
+      type: "toolCallStarted",
+      toolName: "retail_order_confirmation",
+      args: {
+        reservationId: latestReservation.reservationId,
+        channel: "whatsapp",
+      },
+      timestamp: Date.now(),
+    });
+    if (!canUseDemoWhatsApp()) {
+      sendEvent({
+        type: "toolCallCompleted",
+        toolName: "retail_order_confirmation",
+        success: false,
+        error: publicWhatsAppFailureMessage(latestReservation),
+        durationMs: 0,
+        timestamp: Date.now(),
+      });
+      console.error(
+        "[VoiceAgent/Browser] Post-call customer WhatsApp skipped: WhatsApp is not configured"
+      );
+      return;
+    }
+    const to = RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
+    const body = truncateForSms(
+      `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
+    );
+    const rawResult = await executeTool("twilio_whatsapp", { to, body });
+    const result = sanitizeWhatsAppToolResult(rawResult, latestReservation);
+    sendEvent({
+      type: "toolCallCompleted",
+      toolName: "retail_order_confirmation",
+      success: result.success,
+      result: result.success ? "Order Confirmation WhatsApp message sent to the customer." : undefined,
+      error: result.error,
+      durationMs: result.durationMs,
+      timestamp: Date.now(),
+    });
+    if (result.success) {
+      console.log("[VoiceAgent/Browser] Post-call customer WhatsApp sent");
+    } else {
+      console.error("[VoiceAgent/Browser] Post-call customer WhatsApp failed:", result.error);
     }
   }
 

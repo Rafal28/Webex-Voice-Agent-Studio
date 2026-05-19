@@ -28,6 +28,20 @@ export function isSmsConfigured(): boolean {
   );
 }
 
+export function normalizeWhatsAppAddress(phoneNumber: string): string {
+  const trimmed = String(phoneNumber || "").trim();
+  if (trimmed.toLowerCase().startsWith("whatsapp:")) return trimmed;
+  return `whatsapp:${trimmed}`;
+}
+
+export function isWhatsAppConfigured(): boolean {
+  return Boolean(
+    process.env.TWILIO_ACCOUNT_SID &&
+    process.env.TWILIO_AUTH_TOKEN &&
+    process.env.TWILIO_WHATSAPP_FROM
+  );
+}
+
 export async function sms(args: Record<string, any>): Promise<{ success: boolean; result?: string; error?: string }> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -67,5 +81,47 @@ export async function sms(args: Record<string, any>): Promise<{ success: boolean
   } catch (error: any) {
     console.error("Twilio SMS exception:", error);
     return { success: false, error: error.message || "Failed to send SMS" };
+  }
+}
+
+export async function whatsapp(args: Record<string, any>): Promise<{ success: boolean; result?: string; error?: string }> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromWhatsApp = process.env.TWILIO_WHATSAPP_FROM;
+
+  if (!accountSid || !authToken || !fromWhatsApp) {
+    return { success: false, error: "Twilio WhatsApp is not configured" };
+  }
+
+  const { to, body } = args;
+  if (typeof to !== "string" || !to.trim()) {
+    return { success: false, error: "WhatsApp destination phone number is required" };
+  }
+  if (typeof body !== "string" || !body.trim()) {
+    return { success: false, error: "WhatsApp body is required" };
+  }
+
+  try {
+    const toWhatsApp = normalizeWhatsAppAddress(to);
+    const from = normalizeWhatsAppAddress(fromWhatsApp);
+    console.log(`Sending Twilio WhatsApp message to ${toWhatsApp}...`);
+
+    const twilioModule = (await import("twilio")).default;
+    const client = twilioModule(accountSid, authToken);
+
+    const message = await client.messages.create({
+      body,
+      from,
+      to: toWhatsApp,
+    });
+
+    console.log(`WhatsApp message sent successfully. SID: ${message.sid}`);
+    return {
+      success: true,
+      result: `WhatsApp message successfully sent to ${toWhatsApp}. Reference ID: ${message.sid}`,
+    };
+  } catch (error: any) {
+    console.error("Twilio WhatsApp exception:", error);
+    return { success: false, error: error.message || "Failed to send WhatsApp message" };
   }
 }
