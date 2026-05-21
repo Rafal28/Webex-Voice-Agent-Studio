@@ -15,9 +15,45 @@ const RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS = ENABLE_RETAIL_TIMEOUT ? 3500 : 0;
 export const retailTools = [
   {
     type: "function" as const,
+    name: "retail_profile_lookup",
+    description:
+      "Look up a lightweight caller profile candidate by phone number. This does not verify identity. After this tool, ask the caller to confirm their last name before using customer-specific details.",
+    parameters: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description: "Caller phone number in E.164 format when available.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function" as const,
+    name: "retail_confirm_profile",
+    description:
+      "Verify that the caller matches the profile candidate by checking the last name they provide. Call this after retail_profile_lookup and before loading profile history or greeting by customer name.",
+    parameters: {
+      type: "object",
+      properties: {
+        customerId: {
+          type: "string",
+          description: "Customer identifier returned by retail_profile_lookup.",
+        },
+        lastName: {
+          type: "string",
+          description: "Last name provided by the caller.",
+        },
+      },
+      required: ["lastName"],
+    },
+  },
+  {
+    type: "function" as const,
     name: "retail_user_lookup",
     description:
-      "Look up the caller profile at the start of every call. Use this silently before greeting or answering customer-specific questions.",
+      "Look up the verified caller profile after identity is confirmed. Do not use this to skip last-name confirmation at call start.",
     parameters: {
       type: "object",
       properties: {
@@ -71,6 +107,22 @@ export const retailTools = [
         },
       },
       required: [],
+    },
+  },
+  {
+    type: "function" as const,
+    name: "retail_search_products",
+    description:
+      "Search the product catalog when the caller asks for a particular product or product family. Use this before discussing availability, alternatives, or inventory for a specific product.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Product name, category, family, or model the caller asked about.",
+        },
+      },
+      required: ["query"],
     },
   },
   {
@@ -170,6 +222,53 @@ export const retailTools = [
     },
   },
 ];
+
+export async function profile_lookup(args: Record<string, any>): Promise<ToolResult> {
+  const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
+  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
+
+  return {
+    success: true,
+    result: "Profile candidate found. Last-name confirmation is required before using customer details.",
+    data: {
+      customerId: "cust-john-042",
+      preferredName: "John",
+      maskedFullName: "John R.",
+      phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
+      confirmationRequired: true,
+      confirmationPrompt: "Based on your phone number, I found a profile for John. Can you confirm your last name?",
+    },
+  };
+}
+
+export async function confirm_profile(args: Record<string, any>): Promise<ToolResult> {
+  const suppliedLastName = String(args.lastName || "").trim().toLowerCase();
+  const verified = suppliedLastName === "rivera";
+
+  if (!verified) {
+    return {
+      success: true,
+      result: "Last name did not match the profile candidate.",
+      data: {
+        verified: false,
+        customerId: String(args.customerId || "cust-john-042"),
+        reason: "last-name-mismatch",
+      },
+    };
+  }
+
+  return {
+    success: true,
+    result: "Profile confirmed. The caller is John Rivera.",
+    data: {
+      verified: true,
+      customerId: String(args.customerId || "cust-john-042"),
+      customerName: "John Rivera",
+      preferredName: "John",
+      verifiedAt: Date.now(),
+    },
+  };
+}
 
 export async function user_lookup(args: Record<string, any>): Promise<ToolResult> {
   const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
@@ -277,6 +376,44 @@ export async function get_customer_context(args: Record<string, any>): Promise<T
   };
 }
 
+export async function search_products(args: Record<string, any>): Promise<ToolResult> {
+  const query = String(args.query || args.product || "").trim();
+  if (!query) {
+    return { success: false, error: "Product search query is required." };
+  }
+
+  const queryLower = query.toLowerCase();
+  const queryWords = getProductQueryWords(queryLower);
+  const matches = RETAIL_STORE_ASSISTANT_USE_CASE.inventory
+    .filter((item) => item.category.toLowerCase() !== "accessory")
+    .filter((item) => productMatchesQuery(item, queryLower, queryWords))
+    .slice(0, 6);
+  const catalogMatches = getUniqueCatalogProducts(matches);
+
+  if (catalogMatches.length === 0) {
+    return {
+      success: true,
+      result: `No exact catalog match found for ${query}. Ask one clarifying question or offer to check nearby alternatives.`,
+      data: {
+        query,
+        matches: [],
+        noMatch: true,
+      },
+    };
+  }
+
+  return {
+    success: true,
+    result: `Found ${catalogMatches.length} catalog match${catalogMatches.length === 1 ? "" : "es"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only; ask for pickup location before checking store availability.`,
+    data: {
+      query,
+      matches: catalogMatches,
+      topMatch: catalogMatches[0],
+      availabilityChecked: false,
+    },
+  };
+}
+
 export async function lookup_inventory(args: Record<string, any>): Promise<ToolResult> {
   const product = String(args.product || "").trim();
   const query = product.toLowerCase();
@@ -307,10 +444,7 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
 
       // Word-overlap match: ignore generation numbers, storage sizes, colours
       // e.g. "iPad mini (6th Generation)" → ["ipad", "mini"] both appear in "iPad mini, 128GB, Silver"
-      const queryWords = query
-        .replace(/[^a-z0-9\s]/g, " ")
-        .split(/\s+/)
-        .filter((w) => w.length >= 3 && !/^(\d+(st|nd|rd|th|gb|tb|mm|inch)?|generation|model|new|the|and|for|with)$/.test(w));
+      const queryWords = getProductQueryWords(query);
 
       if (queryWords.length >= 2) {
         const significantMatches = queryWords.filter((w) => {
@@ -415,6 +549,62 @@ function hasPickupDateSignal(value: string): boolean {
     /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b\s+\d{1,2}\b/.test(text) ||
     /\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/.test(text)
   );
+}
+
+function getProductQueryWords(query: string): string[] {
+  return query
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !/^(\d+(st|nd|rd|th|gb|tb|mm|inch)?|generation|model|new|the|and|for|with)$/.test(w));
+}
+
+function productMatchesQuery(item: RetailInventoryItem, queryLower: string, queryWords: string[]): boolean {
+  const nameLower = item.name.toLowerCase();
+  const skuLower = item.sku.toLowerCase();
+  const catLower = item.category.toLowerCase();
+
+  const fastPathRegex = new RegExp(`\\b${queryLower.replace(/[^a-z0-9\s]/g, " ").trim().replace(/\s+/g, "\\b.*\\b")}\\b`);
+  if (nameLower.includes(queryLower) || fastPathRegex.test(catLower) || skuLower.includes(queryLower) || queryLower.includes(nameLower)) {
+    return true;
+  }
+
+  if (queryWords.length >= 2) {
+    const significantMatches = queryWords.filter((w) => {
+      const regex = new RegExp(`\\b${w}\\b`);
+      return regex.test(nameLower) || regex.test(skuLower) || regex.test(catLower);
+    });
+    return significantMatches.length >= Math.min(2, queryWords.length);
+  }
+
+  return queryWords.length === 1 && (new RegExp(`\\b${queryWords[0]}\\b`).test(nameLower) || new RegExp(`\\b${queryWords[0]}\\b`).test(skuLower));
+}
+
+function getUniqueCatalogProducts(items: RetailInventoryItem[]): Array<{
+  sku: string;
+  name: string;
+  category: string;
+  price: string;
+}> {
+  const products = new Map<string, {
+    sku: string;
+    name: string;
+    category: string;
+    price: string;
+  }>();
+
+  items.forEach((item) => {
+    const key = `${item.name.toLowerCase()}|${item.category.toLowerCase()}|${item.price.toLowerCase()}`;
+    if (!products.has(key)) {
+      products.set(key, {
+        sku: item.sku,
+        name: item.name,
+        category: item.category,
+        price: item.price,
+      });
+    }
+  });
+
+  return Array.from(products.values());
 }
 
 function hasPickupTimeSignal(value: string): boolean {
