@@ -233,7 +233,7 @@ export async function profile_lookup(args: Record<string, any>): Promise<ToolRes
     data: {
       customerId: "cust-john-042",
       preferredName: "John",
-      maskedFullName: "John S.",
+      maskedFullName: "John R.",
       phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
       confirmationRequired: true,
       confirmationPrompt: "Based on your phone number, I found a profile for John. Can you confirm your last name?",
@@ -259,11 +259,11 @@ export async function confirm_profile(args: Record<string, any>): Promise<ToolRe
 
   return {
     success: true,
-    result: "Profile confirmed for demo purposes. The caller is John Smith.",
+    result: "Profile confirmed for demo purposes. The caller is John Rivera.",
     data: {
       verified: true,
       customerId: String(args.customerId || "cust-john-042"),
-      customerName: "John Smith",
+      customerName: "John Rivera",
       preferredName: "John",
       suppliedLastName,
       verificationMode: "demo-any-last-name",
@@ -282,10 +282,10 @@ export async function user_lookup(args: Record<string, any>): Promise<ToolResult
     data: {
       customerId: "cust-john-042",
       name: "John",
-      fullName: "John Smith",
+      fullName: "John Rivera",
       preferredName: "John",
       phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
-      email: "john.smith@example.com",
+      email: "john.rivera@example.com",
       loyaltyTier: "Gold member",
       preferredStore: "ask caller",
       preferredPickupWindow: customer.preferredPickupTime,
