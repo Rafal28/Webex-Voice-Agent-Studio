@@ -19,10 +19,8 @@ import {
 } from "./reservation-delivery";
 
 const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
-const BROWSER_AUDIO_ECHO_GUARD_MS = 350;
 const BROWSER_TRANSCRIPT_ECHO_GUARD_MS = 650;
 const BROWSER_ASSISTANT_ECHO_MATCH_MS = 5000;
-const BROWSER_ACCEPTED_SPEECH_TRANSCRIPT_WINDOW_MS = 12000;
 const TWILIO_TRANSCRIPT_ECHO_GUARD_MS = 1200;
 const TWILIO_ASSISTANT_ECHO_MATCH_MS = 10000;
 const BROWSER_PCM16_SAMPLE_RATE = 24000;
@@ -55,7 +53,6 @@ interface BrowserTranscriptGuardContext {
   lastAssistantAudioAt: number;
   lastAssistantDoneAt: number;
   lastAssistantTranscript: string;
-  lastAcceptedUserSpeechAt: number;
   lastBrowserPlaybackEndedAt: number;
   responseActive: boolean;
 }
@@ -614,7 +611,7 @@ function isBriefButValidTranscript(text: string): boolean {
   const normalized = normalizeTranscript(text)
     .replace(/['’]/g, "")
     .replace(/\s+/g, " ");
-  return /^(yes|yeah|yep|no|nope|ok|okay|sure|thanks|thank you|sorry|sorry what|what|hello|hi|hey|repeat that|can you repeat|mhm|mmhm|mm hmm|hmm)$/.test(normalized);
+  return /^(yes|yeah|yep|no|nope|ok|okay|sure|thanks|thank you|sorry|sorry what|what|wait|hold on|hang on|one sec|one second|actually|no wait|hello|hi|hey|repeat that|can you repeat|mhm|mmhm|mm hmm|hmm)$/.test(normalized);
 }
 
 function isLikelyVerificationCodeTranscript(text: string): boolean {
@@ -817,20 +814,6 @@ function shouldSuppressTwilioUserTranscript(
   return false;
 }
 
-function shouldSuppressBrowserAudioInput(
-  responseActive: boolean,
-  browserPlaybackActive: boolean,
-  lastAssistantAudioAt: number,
-  lastBrowserPlaybackEndedAt: number
-): boolean {
-  const now = Date.now();
-  return (
-    browserPlaybackActive ||
-    now - lastAssistantAudioAt < BROWSER_AUDIO_ECHO_GUARD_MS ||
-    now - lastBrowserPlaybackEndedAt < BROWSER_AUDIO_ECHO_GUARD_MS
-  );
-}
-
 function rawAudioToBase64(raw: RawData): string {
   if (Buffer.isBuffer(raw)) return raw.toString("base64");
   if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString("base64");
@@ -860,26 +843,30 @@ function shouldSuppressBrowserUserTranscript(
   if (!normalized) return true;
 
   const now = Date.now();
-  const hasRecentAcceptedUserSpeech =
-    now - context.lastAcceptedUserSpeechAt < BROWSER_ACCEPTED_SPEECH_TRANSCRIPT_WINDOW_MS;
   const justAfterAssistant =
     now - context.lastAssistantDoneAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS ||
     now - context.lastAssistantAudioAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS ||
     now - context.lastBrowserPlaybackEndedAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS;
-
-  if ((context.responseActive || context.browserPlaybackActive || justAfterAssistant) && !hasRecentAcceptedUserSpeech) {
-    return true;
-  }
+  const duringAssistantOutput = context.responseActive || context.browserPlaybackActive || justAfterAssistant;
 
   if (isEnglishLanguage(context.language) && hasMostlyNonLatinLetters(normalized)) {
     return true;
   }
 
-  const recentAssistant = now - context.lastAssistantDoneAt < BROWSER_ASSISTANT_ECHO_MATCH_MS;
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (duringAssistantOutput && words.length <= 2 && !isBriefButValidTranscript(normalized)) {
+    return true;
+  }
+
+  const recentAssistant =
+    context.responseActive ||
+    context.browserPlaybackActive ||
+    now - context.lastAssistantDoneAt < BROWSER_ASSISTANT_ECHO_MATCH_MS ||
+    now - context.lastAssistantAudioAt < BROWSER_ASSISTANT_ECHO_MATCH_MS;
   if (
     recentAssistant &&
     context.lastAssistantTranscript &&
-    hasHighAssistantEchoOverlap(normalized, context.lastAssistantTranscript)
+    isLikelyAssistantEchoTranscript(normalized, context.lastAssistantTranscript)
   ) {
     return true;
   }
@@ -959,8 +946,6 @@ function handleTwilioSession(ws: WebSocket): void {
   let lastAssistantTranscript = "";
   let lastUserTranscript = "";
   let suppressAssistantOutput = false;
-  let suppressNextTwilioResponse = false;
-  let suppressNextTwilioResponseTimer: ReturnType<typeof setTimeout> | null = null;
   let assistantTranscriptGuard = "";
   let callEndedSent = false;
   let pendingEndCall = false;
@@ -985,6 +970,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
+  let pendingTwilioUserSpeechStartedAt: number | null = null;
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -1007,11 +993,6 @@ function handleTwilioSession(ws: WebSocket): void {
         lastAssistantTranscript = "";
         lastUserTranscript = "";
         suppressAssistantOutput = false;
-        suppressNextTwilioResponse = false;
-        if (suppressNextTwilioResponseTimer) {
-          clearTimeout(suppressNextTwilioResponseTimer);
-          suppressNextTwilioResponseTimer = null;
-        }
         callerPhone = typeof params.callerPhone === "string" && params.callerPhone.trim()
           ? params.callerPhone.trim()
           : "Unknown";
@@ -1078,11 +1059,13 @@ ${startupRetailContext}`;
           inputAudioTranscriptionPrompt:
             "The caller is speaking English (en-US) to a retail store voice assistant over a phone call. Transcribe only the caller's English speech. Do not translate or infer Spanish.",
           inputAudioNoiseReduction: { type: "near_field" },
+          // Speakerphone echo can fire speech_started before transcript echo guards run.
+          // For PSTN, only accepted caller transcripts below are allowed to interrupt or respond.
           turnDetection: {
             type: "semantic_vad",
-            create_response: true,
+            create_response: false,
             eagerness: "medium",
-            interrupt_response: true,
+            interrupt_response: false,
           },
           tools,
         });
@@ -1106,22 +1089,8 @@ ${startupRetailContext}`;
         openai.on("userSpeechStarted", () => {
           clearTwilioIdleFollowUp();
           idleFollowUpSent = false;
-          if (markQueue.length > 0 && responseStartTs !== null) {
-            const elapsed = latestTs - responseStartTs;
-            const audioEndMs = Math.max(
-              0,
-              Math.min(Math.round(elapsed), Math.round(currentTwilioAudioSentMs))
-            );
-            if (lastItemId && audioEndMs < Math.round(currentTwilioAudioSentMs) - 20) {
-              openai!.truncateResponse(lastItemId, audioEndMs);
-            }
-            ws.send(JSON.stringify({ event: "clear", streamSid }));
-            markQueue = [];
-            lastItemId = null;
-            currentTwilioItemId = null;
-            currentTwilioAudioSentMs = 0;
-            responseStartTs = null;
-          }
+          // Mark possible speech, but wait for transcript validation before barge-in.
+          pendingTwilioUserSpeechStartedAt = Date.now();
         });
 
         const handleTwilioUserTranscript = async (text: string): Promise<void> => {
@@ -1137,8 +1106,7 @@ ${startupRetailContext}`;
             })
           ) {
             console.warn(`[VoiceAgent/Twilio] Suppressed likely phone-speaker echo transcript: ${trimmed}`);
-            suppressNextTwilioGeneratedResponse();
-            suppressTwilioAssistantResponse("Likely phone-speaker echo transcript");
+            pendingTwilioUserSpeechStartedAt = null;
             return;
           }
 
@@ -1149,8 +1117,7 @@ ${startupRetailContext}`;
           });
           if (reviewed.action === "suppress") {
             console.warn(`[VoiceAgent/Twilio] Suppressed suspicious user transcript: ${trimmed}`);
-            suppressNextTwilioGeneratedResponse();
-            suppressTwilioAssistantResponse("Suspicious caller transcript");
+            pendingTwilioUserSpeechStartedAt = null;
             return;
           }
           if (reviewed.action === "replace") {
@@ -1174,7 +1141,10 @@ ${startupRetailContext}`;
           });
           if (isEndCallIntent(reviewed.text)) {
             requestTwilioGracefulEndCall("Caller expressed end-call intent");
+          } else {
+            respondToAcceptedTwilioUserTurn();
           }
+          pendingTwilioUserSpeechStartedAt = null;
         };
 
         openai.on("userTranscript", (text: string) => {
@@ -1184,11 +1154,7 @@ ${startupRetailContext}`;
         openai.on("responseStarted", () => {
           twilioResponseActive = true;
           clearTwilioIdleFollowUp();
-          if (suppressNextTwilioResponseTimer) {
-            clearTimeout(suppressNextTwilioResponseTimer);
-            suppressNextTwilioResponseTimer = null;
-          }
-          suppressAssistantOutput = suppressNextTwilioResponse;
+          suppressAssistantOutput = false;
           assistantTranscriptGuard = "";
         });
 
@@ -1384,13 +1350,14 @@ ${startupRetailContext}`;
 
         openai.on("responseDone", () => {
           twilioResponseActive = false;
-          suppressNextTwilioResponse = false;
-          if (suppressNextTwilioResponseTimer) {
-            clearTimeout(suppressNextTwilioResponseTimer);
-            suppressNextTwilioResponseTimer = null;
-          }
           suppressAssistantOutput = false;
           maybeCompleteTwilioPendingEndCall("End-call final audio completed");
+        });
+
+        openai.on("responseCancelled", () => {
+          twilioResponseActive = false;
+          suppressAssistantOutput = false;
+          maybeCompleteTwilioPendingEndCall("End-call response cancelled");
         });
 
         openai.once("sessionReady", () => {
@@ -1436,10 +1403,6 @@ ${startupRetailContext}`;
 
   ws.on("close", () => {
     clearTwilioIdleFollowUp();
-    if (suppressNextTwilioResponseTimer) {
-      clearTimeout(suppressNextTwilioResponseTimer);
-      suppressNextTwilioResponseTimer = null;
-    }
     openai?.close();
     sendCallEnded();
   });
@@ -1792,17 +1755,57 @@ ${startupRetailContext}`;
     }
   }
 
-  function suppressNextTwilioGeneratedResponse(): void {
-    suppressNextTwilioResponse = true;
-    if (suppressNextTwilioResponseTimer) {
-      clearTimeout(suppressNextTwilioResponseTimer);
+  function clearTwilioAssistantPlayback(): boolean {
+    const hadBufferedPlayback = markQueue.length > 0 || responseStartTs !== null || currentTwilioAudioSentMs > 0;
+    if (!hadBufferedPlayback) return false;
+
+    const elapsed = responseStartTs === null
+      ? currentTwilioAudioSentMs
+      : Math.max(0, latestTs - responseStartTs);
+    const audioEndMs = Math.max(
+      0,
+      Math.min(Math.round(elapsed), Math.round(currentTwilioAudioSentMs))
+    );
+
+    if (lastItemId && audioEndMs < Math.round(currentTwilioAudioSentMs) - 20) {
+      openai?.truncateResponse(lastItemId, audioEndMs);
     }
-    suppressNextTwilioResponseTimer = setTimeout(() => {
-      if (!twilioResponseActive) {
-        suppressNextTwilioResponse = false;
-      }
-      suppressNextTwilioResponseTimer = null;
-    }, 2500);
+    if (streamSid && ws.readyState === WebSocket.OPEN && markQueue.length > 0) {
+      ws.send(JSON.stringify({ event: "clear", streamSid }));
+    }
+
+    markQueue = [];
+    lastItemId = null;
+    currentTwilioItemId = null;
+    currentTwilioAudioSentMs = 0;
+    responseStartTs = null;
+    return true;
+  }
+
+  function respondToAcceptedTwilioUserTurn(): void {
+    if (!openai || pendingEndCall || endingCall) return;
+
+    const interruptedAssistant =
+      twilioResponseActive ||
+      markQueue.length > 0 ||
+      responseStartTs !== null ||
+      pendingTwilioUserSpeechStartedAt !== null;
+
+    clearTwilioAssistantPlayback();
+
+    if (twilioResponseActive) {
+      suppressAssistantOutput = true;
+      openai.cancelResponse();
+      twilioResponseActive = false;
+      setTimeout(() => {
+        if (!openai || pendingEndCall || endingCall) return;
+        suppressAssistantOutput = false;
+        openai.triggerResponse();
+      }, interruptedAssistant ? 150 : 0);
+      return;
+    }
+
+    openai.triggerResponse();
   }
 
   function scheduleTwilioIdleFollowUp(): void {
@@ -1933,7 +1936,6 @@ function handleBrowserSession(ws: WebSocket): void {
   let lastAssistantAudioAt = 0;
   let lastAssistantDoneAt = 0;
   let lastAssistantTranscript = "";
-  let lastAcceptedUserSpeechAt = 0;
   let lastBrowserPlaybackEndedAt = 0;
   let acceptedUserTranscriptCount = 0;
   let language = "en-US";
@@ -1960,6 +1962,7 @@ function handleBrowserSession(ws: WebSocket): void {
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
+  let pendingBrowserUserSpeechStartedAt: number | null = null;
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw, isBinary) => {
@@ -1990,6 +1993,7 @@ function handleBrowserSession(ws: WebSocket): void {
         startupRetailContext = "";
         idleFollowUpSent = false;
         assistantTurnCount = 0;
+        pendingBrowserUserSpeechStartedAt = null;
         clearBrowserIdleFollowUp();
         transcriptEntries.length = 0;
 
@@ -2034,13 +2038,15 @@ ${startupRetailContext}`;
           inputAudioTranscriptionPrompt:
             "The user is speaking English (en-US) to a retail store voice assistant. Transcribe only the user's English speech. Ignore silence, background noise, and assistant audio. Do not translate or infer Spanish.",
           inputAudioNoiseReduction: { type: "far_field" },
+          // Browser speaker mode can feed assistant audio back into the mic.
+          // Validate the transcript before interrupting playback or creating a reply.
           turnDetection: {
             type: "server_vad",
             threshold: 0.75,
             prefix_padding_ms: 300,
             silence_duration_ms: 380,
-            create_response: true,
-            interrupt_response: true,
+            create_response: false,
+            interrupt_response: false,
           },
           tools,
         });
@@ -2077,25 +2083,12 @@ ${startupRetailContext}`;
         openai.on("userSpeechStarted", () => {
           clearBrowserIdleFollowUp();
           idleFollowUpSent = false;
-          const speechDuringPlayback = shouldSuppressBrowserAudioInput(
-            responseActive,
-            browserPlaybackActive,
-            lastAssistantAudioAt,
-            lastBrowserPlaybackEndedAt
-          );
-
-          lastAcceptedUserSpeechAt = Date.now();
+          pendingBrowserUserSpeechStartedAt = Date.now();
           browserUserSpeechUiActive = true;
-          if (speechDuringPlayback) {
-            handleBrowserBargeIn();
-          }
           sendEvent({ type: "userSpeechStarted", timestamp: Date.now() });
         });
 
         openai.on("userSpeechStopped", () => {
-          if (Date.now() - lastAcceptedUserSpeechAt > BROWSER_ACCEPTED_SPEECH_TRANSCRIPT_WINDOW_MS) {
-            return;
-          }
           if (browserUserSpeechUiActive) {
             browserUserSpeechUiActive = false;
             sendEvent({ type: "userSpeechStopped", timestamp: Date.now() });
@@ -2106,7 +2099,7 @@ ${startupRetailContext}`;
           const trimmed = text.trim();
           if (initialGreetingActive) {
             console.warn(`[VoiceAgent/Browser] Suppressed user transcript during opening greeting: ${trimmed}`);
-            suppressBrowserAssistantResponse("User transcript during opening greeting");
+            pendingBrowserUserSpeechStartedAt = null;
             browserUserSpeechUiActive = false;
             sendEvent({ type: "userTranscriptSuppressed" });
             sendEvent({ type: "userSpeechStopped", timestamp: Date.now() });
@@ -2119,13 +2112,12 @@ ${startupRetailContext}`;
               language,
               lastAssistantAudioAt,
               lastAssistantDoneAt,
-              lastAssistantTranscript,
-              lastAcceptedUserSpeechAt,
+              lastAssistantTranscript: assistantTranscriptGuard || lastAssistantTranscript,
               lastBrowserPlaybackEndedAt,
               responseActive,
             })
           ) {
-            suppressBrowserAssistantResponse("Likely echo or stale user transcript");
+            pendingBrowserUserSpeechStartedAt = null;
             browserUserSpeechUiActive = false;
             sendEvent({ type: "userTranscriptSuppressed" });
             sendEvent({ type: "userSpeechStopped", timestamp: Date.now() });
@@ -2139,7 +2131,7 @@ ${startupRetailContext}`;
           });
           if (reviewed.action === "suppress") {
             console.warn(`[VoiceAgent/Browser] Suppressed suspicious user transcript: ${trimmed}`);
-            suppressBrowserAssistantResponse("Suspicious user transcript");
+            pendingBrowserUserSpeechStartedAt = null;
             browserUserSpeechUiActive = false;
             sendEvent({ type: "userTranscriptSuppressed" });
             sendEvent({ type: "userSpeechStopped", timestamp: Date.now() });
@@ -2165,7 +2157,10 @@ ${startupRetailContext}`;
           browserUserSpeechUiActive = false;
           if (isEndCallIntent(reviewed.text)) {
             requestBrowserGracefulEndCall("User expressed end-call intent");
+          } else {
+            respondToAcceptedBrowserUserTurn();
           }
+          pendingBrowserUserSpeechStartedAt = null;
         };
 
         openai.on("userTranscript", (text: string) => {
@@ -2831,6 +2826,53 @@ ${startupRetailContext}`;
     console.warn(`[VoiceAgent/Browser] Response suppressed: ${reason}`);
   }
 
+  function clearBrowserAssistantPlayback(): boolean {
+    const hadPlayback =
+      responseActive ||
+      browserPlaybackActive ||
+      Boolean(currentAssistantItemId) ||
+      currentAssistantAudioSentMs > 0;
+    if (!hadPlayback) return false;
+
+    truncateBrowserAssistantAudio();
+    browserPlaybackActive = false;
+    lastBrowserPlaybackEndedAt = Date.now();
+    currentAssistantItemId = "";
+    currentAssistantAudioSentMs = 0;
+    browserPlaybackStartedAt = 0;
+    sendEvent({ type: "interruptClear", timestamp: Date.now() });
+    return true;
+  }
+
+  function respondToAcceptedBrowserUserTurn(): void {
+    if (!openai || pendingEndCall || endingCall) return;
+
+    const interruptedAssistant =
+      responseActive ||
+      browserPlaybackActive ||
+      Boolean(currentAssistantItemId) ||
+      pendingBrowserUserSpeechStartedAt !== null;
+
+    if (interruptedAssistant) {
+      clearBrowserAssistantPlayback();
+      sendEvent({ type: "bargeInDetected", timestamp: Date.now() });
+    }
+
+    if (responseActive) {
+      suppressAssistantOutput = true;
+      openai.cancelResponse();
+      responseActive = false;
+      setTimeout(() => {
+        if (!openai || pendingEndCall || endingCall) return;
+        suppressAssistantOutput = false;
+        openai.triggerResponse();
+      }, interruptedAssistant ? 150 : 0);
+      return;
+    }
+
+    openai.triggerResponse();
+  }
+
   function scheduleInitialGreetingRelease(delayMs: number): void {
     if (initialGreetingReleaseTimer) {
       clearTimeout(initialGreetingReleaseTimer);
@@ -2840,15 +2882,6 @@ ${startupRetailContext}`;
       browserInputEnabled = true;
       initialGreetingReleaseTimer = null;
     }, delayMs);
-  }
-
-  function handleBrowserBargeIn(): void {
-    browserPlaybackActive = false;
-    lastBrowserPlaybackEndedAt = Date.now();
-    truncateBrowserAssistantAudio();
-    responseActive = false;
-    sendEvent({ type: "bargeInDetected", timestamp: Date.now() });
-    sendEvent({ type: "interruptClear", timestamp: Date.now() });
   }
 
   function truncateBrowserAssistantAudio(): void {
