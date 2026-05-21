@@ -3,20 +3,29 @@ import {
   Boxes,
   BrainCircuit,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Activity,
   Clock3,
+  ClipboardCheck,
+  Gift,
   History,
+  IdCard,
   MapPin,
   PackageCheck,
   Phone,
   Radio,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
+  Store,
   UserRound,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import {
   RETAIL_STORE_ASSISTANT_USE_CASE,
@@ -260,6 +269,8 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
 
 export function getRetailAssistEventTypeForTool(toolName: string): string | null {
   switch (toolName) {
+    case "retail_confirm_profile":
+      return "identityVerified";
     case "retail_get_customer_context":
       return "customerContextLoaded";
     case "retail_lookup_inventory":
@@ -480,66 +491,546 @@ function VerificationAssistCard({ state }: { state: RetailAssistState }) {
   );
 }
 
+interface ThinkingAccordionState {
+  header: string;
+  summary: string;
+  lines: ThinkingLine[];
+}
+
+interface ThinkingAccordionSection extends ThinkingAccordionState {
+  id: string;
+  status: ThinkingLine["status"];
+  active: boolean;
+  icon: ReactNode;
+  tone: "cyan" | "blue" | "green" | "purple" | "amber" | "red" | "slate";
+}
+
+interface ThinkingLine {
+  id: string;
+  text: string;
+  detail?: string;
+  status: "active" | "complete" | "waiting" | "error";
+}
+
+const THINKING_STATUS_LABELS = [
+  "Thinking...",
+  "Looking up context...",
+  "Searching availability...",
+  "Checking options...",
+  "Reasoning through next steps...",
+  "Preparing response...",
+];
+
 export function RetailProgressTimeline({ className, state }: { className?: string; state: RetailAssistState }) {
   const events = [...state.toolEvents].reverse();
+  const [openSectionId, setOpenSectionId] = useState<string>("");
+  const [statusIndex, setStatusIndex] = useState(0);
+  const runningCount = events.filter((e) => e.status === "running").length;
+  const isThinking = runningCount > 0;
+  const sections = getThinkingAccordionSections(state, events, isThinking, statusIndex);
+  const latestSection = sections[sections.length - 1];
+
+  useEffect(() => {
+    if (latestSection) setOpenSectionId(latestSection.id);
+  }, [latestSection?.id]);
+
+  useEffect(() => {
+    if (!isThinking) {
+      setStatusIndex(0);
+      return;
+    }
+    const interval = window.setInterval(() => {
+      setStatusIndex((current) => (current + 1) % THINKING_STATUS_LABELS.length);
+    }, 1400);
+    return () => window.clearInterval(interval);
+  }, [isThinking]);
+
+  if (!hasThinkingActivity(state)) return null;
 
   return (
-    <Card className={cn("border-white/10 bg-card/50 p-4", className)}>
-      <PanelHeader
-        icon={<Radio className="h-4 w-4" />}
-        title="Progress Timeline"
-        subtitle="Follow the steps the assistant has completed for this customer"
-      />
-      <div className="mt-4 space-y-0">
-        {events.length === 0 ? (
-          <div className="rounded-md border border-dashed border-white/10 bg-white/[0.02] p-4 text-sm text-muted-foreground">
-            Customer lookup, inventory checks, reservations, and follow-up steps will appear here as the call progresses.
-          </div>
-        ) : (
-          events.map((event, index) => (
-            <div key={event.id} className="relative flex gap-3 pb-4 last:pb-0">
-              {index < events.length - 1 && (
-                <span className="absolute left-[13px] top-7 h-[calc(100%-1.75rem)] w-px bg-white/10" />
-              )}
-              <span
-                className={cn(
-                  "relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border",
-                  event.status === "done" && "border-green-400/30 bg-green-400/10 text-green-200",
-                  event.status === "running" && "border-primary/30 bg-primary/10 text-primary",
-                  event.status === "error" && "border-red-400/30 bg-red-400/10 text-red-200",
-                  event.status === "ready" && "border-white/10 bg-white/[0.03] text-muted-foreground"
-                )}
-              >
-                {event.status === "done" ? (
-                  <CheckCircle2 className="h-4 w-4" />
-                ) : (
-                  <span
-                    className={cn(
-                      "h-2 w-2 rounded-full",
-                      event.status === "running" && "animate-pulse bg-primary",
-                      event.status === "error" && "bg-red-400",
-                      event.status === "ready" && "bg-muted-foreground/50"
-                    )}
-                  />
-                )}
-              </span>
-              <div className="min-w-0 pt-0.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className={cn("text-sm font-medium", event.status === "done" && "text-green-100")}>
-                    {formatToolName(event.toolName)}
-                  </p>
-                  <span className="text-[11px] text-muted-foreground">{formatTimelineTime(event.timestamp)}</span>
-                </div>
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  {getTimelineEventDetail(event)}
-                </p>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </Card>
+    <div className={cn("space-y-3", className)}>
+      {sections.map((section) => (
+        <ThinkingAccordionBox
+          key={section.id}
+          section={section}
+          isOpen={openSectionId === section.id}
+          onOpenChange={(open) => setOpenSectionId(open ? section.id : "")}
+        />
+      ))}
+    </div>
   );
+}
+
+function ThinkingAccordionBox({
+  section,
+  isOpen,
+  onOpenChange,
+}: {
+  section: ThinkingAccordionSection;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Collapsible
+      open={isOpen}
+      onOpenChange={onOpenChange}
+      className={cn(
+        "overflow-hidden rounded-xl border bg-card/50",
+        isOpen ? "border-white/15" : "border-white/10"
+      )}
+    >
+      <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 p-3 text-sm transition-colors hover:bg-white/[0.02]">
+        <div className="flex min-w-0 items-center gap-3 text-left">
+          <span
+            className={cn(
+              "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
+              getThinkingIconToneClassName(section.tone, section.active)
+            )}
+          >
+            {section.active && <span className={cn("absolute inset-0 rounded-full animate-ping", getThinkingPingClassName(section.tone))} />}
+            <span className="relative">{section.icon}</span>
+          </span>
+          <span className={cn("min-w-0 truncate font-medium", section.active ? "text-primary" : "text-foreground")}>
+            {section.header}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
+          <span className="hidden text-xs sm:inline">{isOpen ? "Hide" : "Show"}</span>
+          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </div>
+      </CollapsibleTrigger>
+
+      <CollapsibleContent>
+        <div className="border-t border-white/10 bg-black/20 p-4">
+          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+            <p className="text-sm leading-relaxed text-foreground/90">{section.summary}</p>
+            <div className="mt-3 space-y-2">
+              {section.lines.map((line) => (
+                <ThinkingLineItem key={line.id} line={line} />
+              ))}
+            </div>
+          </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function ThinkingLineItem({ line }: { line: ThinkingLine }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-md px-1 py-1">
+      <span
+        className={cn(
+          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+          line.status === "active" && "animate-pulse bg-primary",
+          line.status === "complete" && "bg-cyan-300/75",
+          line.status === "error" && "bg-red-400",
+          line.status === "waiting" && "bg-muted-foreground/45"
+        )}
+      />
+      <div className="min-w-0">
+        <p className="text-sm leading-snug text-foreground/90">{line.text}</p>
+        {line.detail && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{line.detail}</p>}
+      </div>
+    </div>
+  );
+}
+
+function getThinkingAccordionSections(
+  state: RetailAssistState,
+  events: RetailToolEvent[],
+  isThinking: boolean,
+  statusIndex: number
+): ThinkingAccordionSection[] {
+  if (events.length === 0) {
+    return [toThinkingSection("fallback", getFallbackWorkState(state), false, "active")];
+  }
+
+  return events.map((event, index) => {
+    const isLatest = index === events.length - 1;
+    const section = getCurrentWorkState(state, event);
+    const active = event.status === "running";
+    return {
+      ...section,
+      id: event.id,
+      header: active && isLatest ? getActiveThinkingHeader(section.header, statusIndex) : section.header,
+      status: getThinkingStatus(event.status),
+      active,
+      icon: getThinkingSectionIcon(section.header, getThinkingStatus(event.status), active),
+      tone: getThinkingSectionTone(section.header, getThinkingStatus(event.status)),
+    };
+  });
+}
+
+function toThinkingSection(
+  id: string,
+  state: ThinkingAccordionState,
+  active: boolean,
+  status: ThinkingLine["status"]
+): ThinkingAccordionSection {
+  return {
+    ...state,
+    id,
+    active,
+    status,
+    icon: getThinkingSectionIcon(state.header, status, active),
+    tone: getThinkingSectionTone(state.header, status),
+  };
+}
+
+function getThinkingSectionIcon(header: string, status: ThinkingLine["status"], active: boolean): ReactNode {
+  const normalized = header.toLowerCase();
+  const className = cn("h-4 w-4", active && "animate-pulse");
+
+  if (status === "error") return <ShieldCheck className={className} />;
+  if (normalized.includes("confirm")) return <IdCard className={className} />;
+  if (normalized.includes("history")) return <History className={className} />;
+  if (normalized.includes("context") || normalized.includes("profile") || normalized.includes("user")) return <UserRound className={className} />;
+  if (normalized.includes("product") || normalized.includes("catalog") || normalized.includes("inventory") || normalized.includes("search")) return <Search className={className} />;
+  if (normalized.includes("reservation") || normalized.includes("reserving")) return <PackageCheck className={className} />;
+  if (normalized.includes("add-on") || normalized.includes("addon")) return <Gift className={className} />;
+  if (normalized.includes("confirmation")) return <ClipboardCheck className={className} />;
+  if (normalized.includes("handoff") || normalized.includes("store")) return <Store className={className} />;
+  if (normalized.includes("wrap")) return <Send className={className} />;
+  return active ? <Activity className={className} /> : <BrainCircuit className={className} />;
+}
+
+function getThinkingSectionTone(header: string, status: ThinkingLine["status"]): ThinkingAccordionSection["tone"] {
+  const normalized = header.toLowerCase();
+  if (status === "error") return "red";
+  if (normalized.includes("confirm")) return "amber";
+  if (normalized.includes("history") || normalized.includes("context") || normalized.includes("profile") || normalized.includes("user")) return "cyan";
+  if (normalized.includes("product") || normalized.includes("catalog") || normalized.includes("inventory") || normalized.includes("search")) return "blue";
+  if (normalized.includes("reservation") || normalized.includes("reserving") || normalized.includes("confirmation")) return "green";
+  if (normalized.includes("add-on") || normalized.includes("addon")) return "purple";
+  if (normalized.includes("handoff") || normalized.includes("store") || normalized.includes("wrap")) return "slate";
+  return "cyan";
+}
+
+function getThinkingIconToneClassName(tone: ThinkingAccordionSection["tone"], active: boolean): string {
+  if (tone === "cyan") return active ? "border-cyan-300/35 bg-cyan-400/10 text-cyan-200" : "border-cyan-300/20 bg-cyan-400/[0.06] text-cyan-200/80";
+  if (tone === "blue") return active ? "border-blue-300/35 bg-blue-400/10 text-blue-200" : "border-blue-300/20 bg-blue-400/[0.06] text-blue-200/80";
+  if (tone === "green") return active ? "border-green-300/35 bg-green-400/10 text-green-200" : "border-green-300/20 bg-green-400/[0.06] text-green-200/80";
+  if (tone === "purple") return active ? "border-purple-300/35 bg-purple-400/10 text-purple-200" : "border-purple-300/20 bg-purple-400/[0.06] text-purple-200/80";
+  if (tone === "amber") return active ? "border-amber-300/35 bg-amber-400/10 text-amber-200" : "border-amber-300/20 bg-amber-400/[0.06] text-amber-200/80";
+  if (tone === "red") return active ? "border-red-300/35 bg-red-400/10 text-red-200" : "border-red-300/20 bg-red-400/[0.06] text-red-200/80";
+  return active ? "border-white/20 bg-white/[0.06] text-foreground" : "border-white/10 bg-white/[0.03] text-muted-foreground";
+}
+
+function getThinkingPingClassName(tone: ThinkingAccordionSection["tone"]): string {
+  if (tone === "cyan") return "bg-cyan-300/15";
+  if (tone === "blue") return "bg-blue-300/15";
+  if (tone === "green") return "bg-green-300/15";
+  if (tone === "purple") return "bg-purple-300/15";
+  if (tone === "amber") return "bg-amber-300/15";
+  if (tone === "red") return "bg-red-300/15";
+  return "bg-white/10";
+}
+
+function hasThinkingActivity(state: RetailAssistState): boolean {
+  return (
+    state.toolEvents.length > 0 ||
+    Boolean(state.verification) ||
+    Object.values(state.completedStages).some(Boolean)
+  );
+}
+
+function getUnderstoodSignals(state: RetailAssistState): string[] {
+  const signals: string[] = [];
+
+  if (state.completedStages.identityVerified || state.completedStages.customerLoaded) {
+    signals.push(`${state.customer.name} is the verified customer.`);
+  } else if (state.verification?.status === "sent") {
+    signals.push(`SMS verification is pending for ${state.verification.phone}.`);
+  } else {
+    signals.push("Customer identity still needs to be confirmed.");
+  }
+
+  if (state.completedStages.customerLoaded) {
+    signals.push(state.customer.intent);
+  } else {
+    signals.push("Profile and history will load after verification.");
+  }
+
+  if (state.completedStages.historyFetched && state.customer.pastChats[0]) {
+    signals.push(`Recent history: ${state.customer.pastChats[0].summary}`);
+  }
+
+  return signals.slice(0, 3);
+}
+
+function getReadySignals(state: RetailAssistState): string[] {
+  const ready: string[] = [];
+
+  if (state.completedStages.customerLoaded) {
+    ready.push("Customer profile and conversation memory can guide the response.");
+  }
+
+  if (state.completedStages.inventoryChecked) {
+    const bestItem = state.inventory.find((item) => item.status === "in_stock") || state.inventory[0];
+    if (bestItem) ready.push(`${bestItem.store} has ${bestItem.quantity} matching unit${bestItem.quantity === 1 ? "" : "s"}.`);
+  }
+
+  if (state.completedStages.reservationCreated && state.reservation) {
+    ready.push(`${state.reservation.item.name} is reserved for ${state.reservation.pickupTime}.`);
+  }
+
+  if (state.completedStages.recommendationCreated && state.recommendation) {
+    ready.push(`${state.recommendation.name} is the recommended add-on.`);
+  }
+
+  if (state.completedStages.handoffCreated && state.handoff) {
+    ready.push("Associate handoff is ready for the store team.");
+  }
+
+  return ready.length > 0 ? ready.slice(-3) : ["No customer-facing action is ready yet."];
+}
+
+function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent): ThinkingAccordionState {
+  if (!event) {
+    return getFallbackWorkState(state);
+  }
+
+  const data = (event.data || {}) as any;
+  const args = (event.args || {}) as any;
+  const running = event.status === "running";
+  const status = getThinkingStatus(event.status);
+  const customerFirstName = getFirstName(data.customer?.name || data.customerName || state.customer.name);
+  const phone = args.phone || data.phone || state.verification?.phone || state.customer.phone;
+
+  if (event.toolName === "retail_profile_lookup") {
+    return {
+      header: running ? "Looking up user" : "Confirming user",
+      summary: `Looking up phone number ${phone}. I see the caller could be ${customerFirstName}, so I need a quick confirmation before using customer details.`,
+      lines: [
+        { id: "lookup-phone", text: `Checking customer records for ${phone}.`, status },
+        { id: "lookup-match", text: `Possible match found: ${customerFirstName}.`, status },
+        { id: "lookup-confirm", text: "Preparing to ask for last-name confirmation.", status: running ? "waiting" : "active" },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_confirm_profile") {
+    const verified = data.verified === true;
+    return {
+      header: running ? "Confirming profile" : verified ? "Profile confirmed" : "Confirmation needed",
+      summary: verified
+        ? `The last name matches ${data.customerName || state.customer.name}. The assistant can now load history and continue naturally.`
+        : "The last name did not match, so the assistant should not use customer-specific details yet.",
+      lines: [
+        { id: "confirm-last-name", text: "Checking the provided last name against the profile candidate.", status },
+        {
+          id: "confirm-result",
+          text: verified ? "Identity confirmed; customer history can be loaded next." : "Identity is still unconfirmed.",
+          status: verified ? "complete" : "error",
+        },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_user_lookup") {
+    return {
+      header: running ? "Looking up user" : "User lookup ready",
+      summary: `Looking up phone number ${phone} and preparing to confirm identity before using customer details.`,
+      lines: [
+        { id: "lookup-phone", text: `Checking customer records for ${phone}.`, status },
+        { id: "lookup-confirm", text: "Preparing to confirm the caller before using profile details.", status },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_user_history_lookup") {
+    return {
+      header: "Looking up history",
+      summary: `Searching ${customerFirstName}'s previous interactions so the assistant can greet him naturally and avoid making him repeat context.`,
+      lines: [
+        { id: "history-calls", text: "Searching previous call history.", status },
+        { id: "history-orders", text: "Looking at previous order history.", status },
+        { id: "history-profile", text: "Reviewing saved profile preferences.", status },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_get_customer_context") {
+    return {
+      header: running ? "Loading customer context" : "Customer context ready",
+      summary: `Combining ${customerFirstName}'s profile, prior conversations, and shopping preferences before the assistant greets him.`,
+      lines: [
+        { id: "context-profile", text: "Reading customer profile.", status },
+        { id: "context-preferences", text: "Checking saved preferences and relationship context.", status },
+        { id: "context-greeting", text: `Preparing a simple welcome for ${customerFirstName}.`, status: running ? "waiting" : "complete" },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_search_products") {
+    const query = args.query || args.product || data.query || "the requested product";
+    const matches = Array.isArray(data.matches) ? data.matches : [];
+    const topMatch = data.topMatch || matches[0];
+    return {
+      header: running ? "Searching products" : matches.length > 0 ? "Product matches found" : "Product search complete",
+      summary: `Searching the catalog for ${query} before checking availability or suggesting alternatives.`,
+      lines: [
+        { id: "product-query", text: `Searching product catalog for "${query}".`, status },
+        {
+          id: "product-match",
+          text: topMatch?.name
+            ? `Best match: ${topMatch.name}.`
+            : "No exact product match found yet.",
+          status,
+        },
+        { id: "product-next", text: "Next step is checking pickup location and inventory.", status: running ? "waiting" : "complete" },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_lookup_inventory") {
+    const available = Array.isArray(data.available) ? data.available[0] : undefined;
+    const product = args.product || data.product || available?.name || "the requested product";
+    const store = args.preferredStore || available?.store || "the requested store";
+    return {
+      header: running ? "Searching inventory" : "Inventory found",
+      summary: `Searching catalog for ${product}, narrowing to the right model, and checking pickup availability at ${store}.`,
+      lines: [
+        { id: "inventory-catalog", text: `Searching catalog for "${product}".`, status },
+        { id: "inventory-narrow", text: "Narrowing results to the requested model and configuration.", status },
+        {
+          id: "inventory-store",
+          text: available?.store
+            ? `${available.name || product} is available at ${available.store}.`
+            : `Checking stock at ${store}.`,
+          status,
+        },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_reserve_item") {
+    const product = data.item?.name || args.product || data.product || state.reservation?.item.name || "the selected item";
+    const store = data.store || args.store || state.reservation?.store || "the selected store";
+    const pickup = data.pickupTime || args.pickupTime || state.reservation?.pickupTime || "the requested pickup time";
+    return {
+      header: running ? "Reserving item" : "Reservation ready",
+      summary: `Holding ${product} at ${store} for ${pickup}, then preparing the confirmation the assistant should say back to the customer.`,
+      lines: [
+        { id: "reserve-item", text: `Reserving ${product}.`, status },
+        { id: "reserve-store", text: `Using ${store} as the pickup location.`, status },
+        { id: "reserve-time", text: `Confirming pickup for ${pickup}.`, status },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_recommend_gift_accessory") {
+    const recommendation = data.recommendation?.name || "A compatible add-on";
+    const product = args.product || data.product || state.reservation?.item.name || "the reserved item";
+    return {
+      header: running ? "Checking add-ons" : "Add-on suggestion ready",
+      summary: `Checking whether there is a relevant accessory for ${product} without turning the call into a broad upsell.`,
+      lines: [
+        { id: "addon-product", text: `Matching accessories to ${product}.`, status },
+        { id: "addon-history", text: "Using prior conversation context only if it is relevant.", status },
+        { id: "addon-result", text: `${recommendation} is the suggested add-on.`, status },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_order_confirmation") {
+    return {
+      header: running ? "Preparing confirmation" : "Confirmation ready",
+      summary: "Preparing the customer-facing reservation summary.",
+      lines: [
+        { id: "confirm-item", text: "Checking the item, pickup store, and pickup time.", status },
+        { id: "confirm-wording", text: "Keeping the confirmation concise.", status },
+      ],
+    };
+  }
+
+  if (event.toolName === "retail_store_manager_summary") {
+    return {
+      header: running ? "Preparing handoff" : "Store handoff ready",
+      summary: "Packaging the reservation and customer context for the store team.",
+      lines: [
+        { id: "handoff-customer", text: "Including the customer and reservation details.", status },
+        { id: "handoff-associate", text: "Adding the short associate note.", status },
+      ],
+    };
+  }
+
+  if (event.toolName === "voice_end_call") {
+    return {
+      header: "Wrapping up",
+      summary: "The assistant is finishing this interaction.",
+      lines: [{ id: "wrap-call", text: "Call flow is complete.", status }],
+    };
+  }
+
+  if (event.status === "error") {
+    return {
+      header: "Needs attention",
+      summary: event.result || "The assistant could not complete one background step.",
+      lines: [{ id: "error-step", text: "A background step failed.", status: "error" }],
+    };
+  }
+
+  return getFallbackWorkState(state);
+}
+
+function getFallbackWorkState(state: RetailAssistState): ThinkingAccordionState {
+  if (state.completedStages.handoffCreated) {
+    return {
+      header: "Store handoff ready",
+      summary: "The assistant has packaged the reservation and recommendation for the store team.",
+      lines: [
+        { id: "fallback-handoff", text: state.handoff?.associateMessage || "Associate handoff is ready.", status: "complete" },
+      ],
+    };
+  }
+  if (state.completedStages.reservationCreated && state.reservation) {
+    return {
+      header: "Reservation ready",
+      summary: `The assistant is ready to confirm ${state.reservation.item.name} at ${state.reservation.store}.`,
+      lines: getReadySignals(state).map((signal, index) => ({ id: `ready-${index}`, text: signal, status: "complete" })),
+    };
+  }
+  if (state.completedStages.inventoryChecked) {
+    return {
+      header: "Inventory found",
+      summary: "The assistant has checked the requested product and pickup options.",
+      lines: [
+        { id: "fallback-inventory", text: "Nearby availability is ready to use in the response.", status: "complete" },
+      ],
+    };
+  }
+  if (state.completedStages.customerLoaded) {
+    return {
+      header: "Customer context ready",
+      summary: "The assistant has enough profile and history context to greet the customer.",
+      lines: getUnderstoodSignals(state).map((signal, index) => ({ id: `understood-${index}`, text: signal, status: "complete" })),
+    };
+  }
+  return {
+    header: "Looking up user",
+    summary: "Looking up the caller before using customer-specific context.",
+    lines: [
+      { id: "fallback-lookup", text: `Checking customer records for ${state.customer.phone}.`, status: "active" },
+    ],
+  };
+}
+
+function getActiveThinkingHeader(baseHeader: string, statusIndex: number): string {
+  if (statusIndex === 0) return baseHeader;
+  return THINKING_STATUS_LABELS[statusIndex];
+}
+
+function getThinkingStatus(status: RetailToolEvent["status"]): ThinkingLine["status"] {
+  if (status === "running") return "active";
+  if (status === "error") return "error";
+  if (status === "done") return "complete";
+  return "waiting";
+}
+
+function getFirstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || "the customer";
 }
 
 export function RetailCustomerMemory({ state, compact = false }: { state: RetailAssistState; compact?: boolean }) {
@@ -923,12 +1414,4 @@ function formatDurationSuffix(durationMs: number | undefined): string {
   if (!Number.isFinite(durationMs)) return "";
   if ((durationMs as number) < 1000) return ` (${Math.max(0, Math.round(durationMs as number))}ms)`;
   return ` (${((durationMs as number) / 1000).toFixed(1)}s)`;
-}
-
-function formatTimelineTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  });
 }
