@@ -27,5 +27,5 @@ const VALID_OPENAI_REALTIME_VOICES = new Set([
 export function mapRealtimeVoice(voice: string): string {
   const normalized = String(voice || "").trim().toLowerCase();
   if (VALID_OPENAI_REALTIME_VOICES.has(normalized)) return normalized;
-  return OPENAI_REALTIME_VOICE_MAP[normalized] || "alloy";
+  return OPENAI_REALTIME_VOICE_MAP[normalized] || "verse";
 }

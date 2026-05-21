@@ -993,7 +993,7 @@ function handleTwilioSession(ws: WebSocket): void {
         activeCallSid = typeof callSid === "string" ? callSid : null;
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
-        let voice = "alloy";
+        let voice = "verse";
         let language = "en-US";
         agentName = "Store Assistant";
         lastAssistantTranscript = "";
@@ -1073,7 +1073,7 @@ ${startupRetailContext}`;
           turnDetection: {
             type: "semantic_vad",
             create_response: true,
-            eagerness: "high",
+            eagerness: "medium",
             interrupt_response: true,
           },
           tools,
@@ -1970,7 +1970,7 @@ function handleBrowserSession(ws: WebSocket): void {
       if (msg.type === "start") {
         const { agentId, config } = msg;
         let instructions = config?.systemPrompt || "You are a helpful voice assistant. Keep responses concise and conversational.";
-        let voice = "alloy";
+        let voice = "verse";
         language = config?.language || language;
         agentName = "Store Assistant";
         lastAssistantTranscript = "";

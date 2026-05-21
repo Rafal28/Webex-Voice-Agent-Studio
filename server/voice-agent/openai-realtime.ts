@@ -44,7 +44,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
   }
 
   connect(): void {
-    const model = this.config.model || process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
+    const model = this.config.model || process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2";
     this.ws = new WebSocket(
       `wss://api.openai.com/v1/realtime?model=${model}`,
       {
@@ -93,7 +93,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
         },
         output: {
           format: getRealtimeAudioFormat(this.config.outputAudioFormat),
-          voice: this.config.voice || "alloy",
+          voice: this.config.voice || "verse",
         },
       },
       instructions: this.config.instructions,
