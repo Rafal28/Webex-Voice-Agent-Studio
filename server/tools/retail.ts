@@ -242,29 +242,31 @@ export async function profile_lookup(args: Record<string, any>): Promise<ToolRes
 }
 
 export async function confirm_profile(args: Record<string, any>): Promise<ToolResult> {
-  const suppliedLastName = String(args.lastName || "").trim().toLowerCase();
-  const verified = suppliedLastName === "smith";
+  const suppliedLastName = String(args.lastName || "").trim();
+  const verified = suppliedLastName.length > 0;
 
   if (!verified) {
     return {
       success: true,
-      result: "Last name did not match the profile candidate.",
+      result: "Last-name confirmation is required before using the profile candidate.",
       data: {
         verified: false,
         customerId: String(args.customerId || "cust-john-042"),
-        reason: "last-name-mismatch",
+        reason: "missing-last-name",
       },
     };
   }
 
   return {
     success: true,
-    result: "Profile confirmed. The caller is John Smith.",
+    result: "Profile confirmed for demo purposes. The caller is John Smith.",
     data: {
       verified: true,
       customerId: String(args.customerId || "cust-john-042"),
       customerName: "John Smith",
       preferredName: "John",
+      suppliedLastName,
+      verificationMode: "demo-any-last-name",
       verifiedAt: Date.now(),
     },
   };
