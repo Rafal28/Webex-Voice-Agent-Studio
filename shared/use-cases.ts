@@ -663,9 +663,9 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     "A retail voice agent that recognizes a returning customer, checks inventory across stores, reserves items, sends SMS follow-up, and prepares the store manager.",
   category: "Retail demo",
   defaultLLM: "gpt-4o",
-  defaultVoice: "nova",
+  defaultVoice: "verse",
   language: "en-US",
-  gender: "female",
+  gender: "neutral",
   heroMetric: "Cross-store conversion",
   demoGoal:
     "Show continuity across sessions, real-time inventory reasoning, reservation action, SMS follow-up, and a Webex-ready store manager handoff.",

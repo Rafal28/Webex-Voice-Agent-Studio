@@ -4,5 +4,6 @@ import { mapRealtimeVoice } from "./voice";
 assert.equal(mapRealtimeVoice("nova"), "shimmer");
 assert.equal(mapRealtimeVoice("onyx"), "echo");
 assert.equal(mapRealtimeVoice("fable"), "ash");
+assert.equal(mapRealtimeVoice("verse"), "verse");
 assert.equal(mapRealtimeVoice(" aura-luna-en "), "shimmer");
-assert.equal(mapRealtimeVoice("unknown-legacy-voice"), "alloy");
+assert.equal(mapRealtimeVoice("unknown-legacy-voice"), "verse");

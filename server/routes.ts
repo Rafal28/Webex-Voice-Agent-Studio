@@ -140,8 +140,28 @@ function getDeepgramClient() {
 const ttsRequestSchema = z.object({
   text: z.string().min(1).max(4096),
   voice: z.string().min(1),
-  model: z.enum(["tts-1", "tts-1-hd"]).default("tts-1"),
+  model: z.enum(["tts-1", "tts-1-hd", "gpt-4o-mini-tts"]).default("tts-1"),
 });
+
+const OPENAI_TTS_LEGACY_VOICES = new Set([
+  "alloy",
+  "ash",
+  "coral",
+  "echo",
+  "fable",
+  "onyx",
+  "nova",
+  "sage",
+  "shimmer",
+]);
+
+function resolveOpenAITtsModel(model: string, voice: string): string {
+  const normalizedVoice = voice.trim().toLowerCase();
+  if ((model === "tts-1" || model === "tts-1-hd") && !OPENAI_TTS_LEGACY_VOICES.has(normalizedVoice)) {
+    return "gpt-4o-mini-tts";
+  }
+  return model;
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
 
@@ -176,11 +196,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ]
       : [
           { id: "alloy", name: "Alloy", gender: "Neutral", style: "Balanced" },
+          { id: "ash", name: "Ash", gender: "Neutral", style: "Warm" },
+          { id: "ballad", name: "Ballad", gender: "Neutral", style: "Expressive" },
+          { id: "coral", name: "Coral", gender: "Neutral", style: "Bright" },
           { id: "echo", name: "Echo", gender: "Male", style: "Deep" },
           { id: "fable", name: "Fable", gender: "Male", style: "British" },
           { id: "onyx", name: "Onyx", gender: "Male", style: "Authoritative" },
           { id: "nova", name: "Nova", gender: "Female", style: "Energetic" },
+          { id: "sage", name: "Sage", gender: "Neutral", style: "Calm" },
           { id: "shimmer", name: "Shimmer", gender: "Female", style: "Soft" },
+          { id: "verse", name: "Verse", gender: "Neutral", style: "Adaptive" },
         ];
 
     res.json({
@@ -730,8 +755,9 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
           });
         }
 
+        const model = resolveOpenAITtsModel(data.model, data.voice);
         const mp3 = await openai.audio.speech.create({
-          model: data.model,
+          model,
           voice: data.voice,
           input: data.text,
         });

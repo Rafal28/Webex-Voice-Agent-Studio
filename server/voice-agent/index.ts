@@ -387,6 +387,14 @@ function buildRuntimeInstructions(baseInstructions: string, agentName?: string):
   return baseInstructions;
 }
 
+function resolveAgentRealtimeVoice(voiceModel: string, instructions: string, agentName?: string): string {
+  const normalizedVoice = String(voiceModel || "").trim().toLowerCase();
+  if (normalizedVoice === "nova" && isRetailStoreUseCasePrompt(instructions, agentName)) {
+    return "verse";
+  }
+  return mapRealtimeVoice(voiceModel);
+}
+
 function getRetailToolEventType(
   toolName: string
 ): "identityVerificationSent" | "identityVerified" | "customerContextLoaded" | "inventoryUpdated" | "recommendationCreated" | "reservationCreated" | "associateHandoffCreated" | null {
@@ -1023,7 +1031,7 @@ function handleTwilioSession(ws: WebSocket): void {
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
-            voice = mapRealtimeVoice(agent.voiceModel);
+            voice = resolveAgentRealtimeVoice(agent.voiceModel, instructions, agentName);
             language = agent.language || language;
             monitorAgentId = resolvedAgentId;
           }
@@ -1990,7 +1998,7 @@ function handleBrowserSession(ws: WebSocket): void {
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
-            voice = mapRealtimeVoice(agent.voiceModel);
+            voice = resolveAgentRealtimeVoice(agent.voiceModel, instructions, agentName);
             language = agent.language || language;
           }
         }

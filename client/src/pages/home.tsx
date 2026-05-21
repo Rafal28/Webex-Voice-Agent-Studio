@@ -21,6 +21,7 @@ const FALLBACK_LLM_OPTIONS = [
 
 const FALLBACK_VOICE_OPTIONS = [
   { value: "alloy", label: "Alloy" },
+  { value: "verse", label: "Verse" },
 ];
 
 const LANGUAGE_OPTIONS = [

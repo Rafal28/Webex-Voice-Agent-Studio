@@ -22,6 +22,7 @@ const FALLBACK_LLMS = [
 
 const FALLBACK_VOICES = [
   { id: "alloy", name: "Alloy", gender: "Neutral", style: "Balanced" },
+  { id: "verse", name: "Verse", gender: "Neutral", style: "Adaptive" },
 ];
 
 const VOICE_PREVIEW_TEXT = "Hello! I'm your voice agent assistant. Let me help you with your tasks.";
