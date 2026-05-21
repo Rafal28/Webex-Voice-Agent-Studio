@@ -704,7 +704,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
   ],
   customer: {
-    name: "John Rivera",
+    name: "John Smith",
     phone: "+16505550142",
     loyaltyTier: "Gold member",
     intent: "Find and reserve a tablet as a birthday gift for his daughter.",
@@ -759,7 +759,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
   ],
   associatePlaybook: {
-    customerName: "John Rivera",
+    customerName: "John Smith",
     intent: "Reserve an iPad as a birthday gift.",
     reservedItem: "iPad Pro 11-inch, M4, 256GB, Blue",
     reservedStore: "Palo Alto",
@@ -814,7 +814,7 @@ export function isRetailStoreUseCasePrompt(prompt: string | undefined, agentName
     text.includes("store assistant") ||
     text.includes("retail store assistant") ||
     text.includes("cross-store intelligence") ||
-    text.includes("john rivera") ||
+    text.includes("john smith") ||
     text.includes("ipad")
   );
 }

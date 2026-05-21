@@ -8,7 +8,7 @@ import {
 } from "./reservation-delivery";
 
 const reservation: RetailReservationForDelivery = {
-  customerName: "John Rivera",
+  customerName: "John Smith",
   itemName: "iPad Air",
   itemDetails: "iPad Air | SKU IPAD-AIR",
   store: "Palo Alto",
