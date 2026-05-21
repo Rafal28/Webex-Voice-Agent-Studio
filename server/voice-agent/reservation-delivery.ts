@@ -114,12 +114,12 @@ export function getReservationDeliverySpokenInstruction(
   route: ReservationSpokenDeliveryRoute
 ): string {
   if (route === "sms") {
-    return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent by text message, and give the reservation reference out loud.";
+    return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation and say that a confirmation will be sent by text message. Do not read out any reservation reference number or code.";
   }
   if (route === "whatsapp") {
-    return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent by WhatsApp, and give the reservation reference out loud.";
+    return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation and say that a confirmation will be sent by WhatsApp. Do not read out any reservation reference number or code.";
   }
-  return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent by email, and give the reservation reference out loud.";
+  return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation and say that a confirmation will be sent by email. Do not read out any reservation reference number or code.";
 }
 
 export function formatReservationConfirmationText(
