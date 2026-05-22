@@ -11,6 +11,7 @@ interface VoiceAgentPanelProps {
   agentName: string;
   systemPrompt?: string;
   voice?: string;
+  gender?: string;
   onStateChange?: (state: VoiceAgentState) => void;
   onRealtimeEvent?: (event: any) => void;
   assistState?: RetailAssistState;
@@ -22,6 +23,7 @@ export function VoiceAgentPanel({
   agentName,
   systemPrompt,
   voice,
+  gender,
   onStateChange,
   onRealtimeEvent,
   assistState,
@@ -31,6 +33,7 @@ export function VoiceAgentPanel({
     agentId,
     systemPrompt,
     voice,
+    gender,
     onEvent: onRealtimeEvent,
   });
 

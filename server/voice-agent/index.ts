@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import OpenAI from "openai";
 import { OpenAIRealtimeClient, RealtimeSessionConfig } from "./openai-realtime";
-import { mapRealtimeVoice } from "./voice";
+import { resolveRealtimeVoice } from "./voice";
 import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
@@ -27,6 +27,7 @@ const BROWSER_PCM16_SAMPLE_RATE = 24000;
 const TWILIO_G711_SAMPLE_RATE = 8000;
 const POST_RESPONSE_IDLE_FOLLOWUP_MS = 7000;
 const TWILIO_END_CALL_FALLBACK_MS = 9000;
+const VOICE_PROVISIONAL_BARGE_IN_RELEASE_MS = 5000;
 const BROWSER_END_CALL_FALLBACK_MS = 7000;
 const REALTIME_TRANSCRIPTION_LANGUAGE = "en";
 const REALTIME_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
@@ -394,12 +395,8 @@ function buildRuntimeInstructions(baseInstructions: string, agentName?: string):
   return baseInstructions;
 }
 
-function resolveAgentRealtimeVoice(voiceModel: string, instructions: string, agentName?: string): string {
-  const normalizedVoice = String(voiceModel || "").trim().toLowerCase();
-  if (normalizedVoice === "nova" && isRetailStoreUseCasePrompt(instructions, agentName)) {
-    return "verse";
-  }
-  return mapRealtimeVoice(voiceModel);
+function resolveAgentRealtimeVoice(voiceModel: string, gender?: string): string {
+  return resolveRealtimeVoice(voiceModel, gender);
 }
 
 function getRetailToolEventType(
@@ -487,6 +484,10 @@ function getClosingInstruction(reason: string): string {
     "Use this wording or very close to it: \"Thanks for calling. Have a good rest of your day.\"",
     `End-call reason: ${reason}`,
   ].join(" ");
+}
+
+function isAssistantClosingTranscript(text: string): boolean {
+  return /thanks for (calling|your time)|good (rest|day)|have a (great|good|wonderful|nice)|goodbye|take care|bye now/i.test(text);
 }
 
 function getIdleFollowUpInstruction(lastAssistantTranscript: string): string {
@@ -983,7 +984,10 @@ function handleTwilioSession(ws: WebSocket): void {
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
   let pendingTwilioUserSpeechStartedAt: number | null = null;
+  let twilioTranscriptPreview = "";
   let pendingTwilioClosingReason: string | null = null;
+  let provisionalTwilioBargeInActive = false;
+  let provisionalTwilioBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -1007,6 +1011,8 @@ function handleTwilioSession(ws: WebSocket): void {
         lastUserTranscript = "";
         suppressAssistantOutput = false;
         pendingTwilioClosingReason = null;
+        provisionalTwilioBargeInActive = false;
+        clearProvisionalTwilioBargeInRelease();
         callerPhone = typeof params.callerPhone === "string" && params.callerPhone.trim()
           ? params.callerPhone.trim()
           : "Unknown";
@@ -1026,7 +1032,7 @@ function handleTwilioSession(ws: WebSocket): void {
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
-            voice = resolveAgentRealtimeVoice(agent.voiceModel, instructions, agentName);
+            voice = resolveAgentRealtimeVoice(agent.voiceModel, agent.gender);
             language = agent.language || language;
             monitorAgentId = resolvedAgentId;
           }
@@ -1103,8 +1109,19 @@ ${startupRetailContext}`;
         openai.on("userSpeechStarted", () => {
           clearTwilioIdleFollowUp();
           idleFollowUpSent = false;
-          // Mark possible speech, but wait for transcript validation before barge-in.
+          // Track possible speech, but only cut audio once transcript text looks non-echo.
           pendingTwilioUserSpeechStartedAt = Date.now();
+          twilioTranscriptPreview = "";
+        });
+
+        openai.on("userTranscriptDelta", (delta: string) => {
+          twilioTranscriptPreview += delta || "";
+          maybeProvisionallyCutTwilioAssistantPlaybackFromTranscript(twilioTranscriptPreview);
+        });
+
+        openai.on("userTranscriptSegment", (text: string) => {
+          twilioTranscriptPreview = text || twilioTranscriptPreview;
+          maybeProvisionallyCutTwilioAssistantPlaybackFromTranscript(twilioTranscriptPreview);
         });
 
         const handleTwilioUserTranscript = async (text: string): Promise<void> => {
@@ -1115,11 +1132,13 @@ ${startupRetailContext}`;
             shouldSuppressTwilioUserTranscript(trimmed, {
               lastAssistantAudioAt,
               lastAssistantDoneAt,
-              lastAssistantTranscript,
+              lastAssistantTranscript: assistantTranscriptGuard || lastAssistantTranscript,
               twilioResponseActive,
             })
           ) {
             console.warn(`[VoiceAgent/Twilio] Suppressed likely phone-speaker echo transcript: ${trimmed}`);
+            releaseProvisionalTwilioBargeIn();
+            twilioTranscriptPreview = "";
             pendingTwilioUserSpeechStartedAt = null;
             return;
           }
@@ -1131,6 +1150,8 @@ ${startupRetailContext}`;
           });
           if (reviewed.action === "suppress") {
             console.warn(`[VoiceAgent/Twilio] Suppressed suspicious user transcript: ${trimmed}`);
+            releaseProvisionalTwilioBargeIn();
+            twilioTranscriptPreview = "";
             pendingTwilioUserSpeechStartedAt = null;
             return;
           }
@@ -1153,6 +1174,8 @@ ${startupRetailContext}`;
             corrected: reviewed.action === "replace",
             timestamp: Date.now(),
           });
+          releaseProvisionalTwilioBargeIn();
+          twilioTranscriptPreview = "";
           if (isEndCallIntent(reviewed.text)) {
             requestTwilioGracefulEndCall("Caller expressed end-call intent");
           } else {
@@ -1207,7 +1230,11 @@ ${startupRetailContext}`;
               text: trimmed,
               timestamp: Date.now(),
             });
-            scheduleTwilioIdleFollowUp();
+            if (isAssistantClosingTranscript(trimmed) && !pendingEndCall && !endingCall) {
+              requestTwilioGracefulEndCall("Assistant delivered closing");
+            } else {
+              scheduleTwilioIdleFollowUp();
+            }
           }
         });
 
@@ -1421,6 +1448,7 @@ ${startupRetailContext}`;
 
   ws.on("close", () => {
     clearTwilioIdleFollowUp();
+    clearProvisionalTwilioBargeInRelease();
     openai?.close();
     sendCallEnded();
   });
@@ -1773,6 +1801,54 @@ ${startupRetailContext}`;
     }
   }
 
+  function hasActiveTwilioAssistantPlayback(): boolean {
+    return twilioResponseActive || markQueue.length > 0 || responseStartTs !== null || currentTwilioAudioSentMs > 0;
+  }
+
+  function clearProvisionalTwilioBargeInRelease(): void {
+    if (provisionalTwilioBargeInReleaseTimer) {
+      clearTimeout(provisionalTwilioBargeInReleaseTimer);
+      provisionalTwilioBargeInReleaseTimer = null;
+    }
+  }
+
+  function releaseProvisionalTwilioBargeIn(): void {
+    clearProvisionalTwilioBargeInRelease();
+    if (!provisionalTwilioBargeInActive) return;
+    provisionalTwilioBargeInActive = false;
+    suppressAssistantOutput = false;
+  }
+
+  function maybeProvisionallyCutTwilioAssistantPlaybackFromTranscript(text: string): void {
+    if (!text.trim()) return;
+    if (!hasActiveTwilioAssistantPlayback()) return;
+    const wordCount = normalizeIntentText(text).split(/\s+/).filter(Boolean).length;
+    if (wordCount < 2 && !isEndCallIntent(text)) return;
+    if (
+      shouldSuppressTwilioUserTranscript(text, {
+        lastAssistantAudioAt,
+        lastAssistantDoneAt,
+        lastAssistantTranscript: assistantTranscriptGuard || lastAssistantTranscript,
+        twilioResponseActive,
+      })
+    ) return;
+    provisionallyCutTwilioAssistantPlayback();
+  }
+
+  function provisionallyCutTwilioAssistantPlayback(): void {
+    if (!openai || pendingEndCall || endingCall || provisionalTwilioBargeInActive) return;
+    if (!hasActiveTwilioAssistantPlayback()) return;
+
+    provisionalTwilioBargeInActive = true;
+    suppressAssistantOutput = true;
+    clearTwilioAssistantPlayback();
+    clearProvisionalTwilioBargeInRelease();
+    provisionalTwilioBargeInReleaseTimer = setTimeout(() => {
+      pendingTwilioUserSpeechStartedAt = null;
+      releaseProvisionalTwilioBargeIn();
+    }, VOICE_PROVISIONAL_BARGE_IN_RELEASE_MS);
+  }
+
   function clearTwilioAssistantPlayback(): boolean {
     const hadBufferedPlayback = markQueue.length > 0 || responseStartTs !== null || currentTwilioAudioSentMs > 0;
     if (!hadBufferedPlayback) return false;
@@ -1908,7 +1984,7 @@ ${startupRetailContext}`;
       data: { reason },
       timestamp: Date.now(),
     });
-    const alreadySaidClosing = /thanks for (calling|your time)|good (rest|day)|have a (great|good|wonderful|nice)|goodbye|take care|bye now/i.test(lastAssistantTranscript);
+    const alreadySaidClosing = isAssistantClosingTranscript(lastAssistantTranscript);
     if (!alreadySaidClosing) {
       if (twilioResponseActive) {
         pendingTwilioClosingReason = reason;
@@ -1993,6 +2069,10 @@ function handleBrowserSession(ws: WebSocket): void {
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
   let pendingBrowserUserSpeechStartedAt: number | null = null;
+  let browserTranscriptPreview = "";
+  let pendingBrowserClosingReason: string | null = null;
+  let provisionalBrowserBargeInActive = false;
+  let provisionalBrowserBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw, isBinary) => {
@@ -2011,7 +2091,7 @@ function handleBrowserSession(ws: WebSocket): void {
       if (msg.type === "start") {
         const { agentId, config } = msg;
         let instructions = config?.systemPrompt || "You are a helpful voice assistant. Keep responses concise and conversational.";
-        let voice = "verse";
+        let voice = resolveRealtimeVoice(config?.voice || "verse", config?.gender);
         language = config?.language || language;
         agentName = "Store Assistant";
         lastAssistantTranscript = "";
@@ -2024,6 +2104,10 @@ function handleBrowserSession(ws: WebSocket): void {
         idleFollowUpSent = false;
         assistantTurnCount = 0;
         pendingBrowserUserSpeechStartedAt = null;
+        browserTranscriptPreview = "";
+        pendingBrowserClosingReason = null;
+        provisionalBrowserBargeInActive = false;
+        clearProvisionalBrowserBargeInRelease();
         clearBrowserIdleFollowUp();
         transcriptEntries.length = 0;
 
@@ -2032,7 +2116,7 @@ function handleBrowserSession(ws: WebSocket): void {
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
-            voice = resolveAgentRealtimeVoice(agent.voiceModel, instructions, agentName);
+            voice = resolveAgentRealtimeVoice(agent.voiceModel, agent.gender);
             language = agent.language || language;
           }
         }
@@ -2114,6 +2198,7 @@ ${startupRetailContext}`;
           clearBrowserIdleFollowUp();
           idleFollowUpSent = false;
           pendingBrowserUserSpeechStartedAt = Date.now();
+          browserTranscriptPreview = "";
           browserUserSpeechUiActive = true;
           sendEvent({ type: "userSpeechStarted", timestamp: Date.now() });
         });
@@ -2129,6 +2214,8 @@ ${startupRetailContext}`;
           const trimmed = text.trim();
           if (initialGreetingActive) {
             console.warn(`[VoiceAgent/Browser] Suppressed user transcript during opening greeting: ${trimmed}`);
+            releaseProvisionalBrowserBargeIn();
+            browserTranscriptPreview = "";
             pendingBrowserUserSpeechStartedAt = null;
             browserUserSpeechUiActive = false;
             sendEvent({ type: "userTranscriptSuppressed" });
@@ -2147,6 +2234,8 @@ ${startupRetailContext}`;
               responseActive,
             })
           ) {
+            releaseProvisionalBrowserBargeIn();
+            browserTranscriptPreview = "";
             pendingBrowserUserSpeechStartedAt = null;
             browserUserSpeechUiActive = false;
             sendEvent({ type: "userTranscriptSuppressed" });
@@ -2161,6 +2250,8 @@ ${startupRetailContext}`;
           });
           if (reviewed.action === "suppress") {
             console.warn(`[VoiceAgent/Browser] Suppressed suspicious user transcript: ${trimmed}`);
+            releaseProvisionalBrowserBargeIn();
+            browserTranscriptPreview = "";
             pendingBrowserUserSpeechStartedAt = null;
             browserUserSpeechUiActive = false;
             sendEvent({ type: "userTranscriptSuppressed" });
@@ -2184,6 +2275,8 @@ ${startupRetailContext}`;
             rawText: reviewed.action === "replace" ? trimmed : undefined,
             corrected: reviewed.action === "replace",
           });
+          releaseProvisionalBrowserBargeIn();
+          browserTranscriptPreview = "";
           browserUserSpeechUiActive = false;
           if (isEndCallIntent(reviewed.text)) {
             requestBrowserGracefulEndCall("User expressed end-call intent");
@@ -2198,7 +2291,14 @@ ${startupRetailContext}`;
         });
 
         openai.on("userTranscriptDelta", (delta: string) => {
+          browserTranscriptPreview += delta || "";
+          maybeProvisionallyCutBrowserAssistantPlaybackFromTranscript(browserTranscriptPreview);
           sendEvent({ type: "userTranscriptDelta", delta });
+        });
+
+        openai.on("userTranscriptSegment", (text: string) => {
+          browserTranscriptPreview = text || browserTranscriptPreview;
+          maybeProvisionallyCutBrowserAssistantPlaybackFromTranscript(browserTranscriptPreview);
         });
 
         openai.on("userTranscriptFailed", (error: any) => {
@@ -2239,7 +2339,11 @@ ${startupRetailContext}`;
             timestamp: Date.now(),
           });
           sendEvent({ type: "assistantTranscriptDone", text: trimmed });
-          scheduleBrowserIdleFollowUp();
+          if (isAssistantClosingTranscript(trimmed) && !pendingEndCall && !endingCall) {
+            requestBrowserGracefulEndCall("Assistant delivered closing");
+          } else {
+            scheduleBrowserIdleFollowUp();
+          }
         });
 
         openai.on("responseDone", () => {
@@ -2248,12 +2352,21 @@ ${startupRetailContext}`;
             scheduleInitialGreetingRelease(850);
           }
           sendEvent({ type: "responseDone" });
+          if (pendingBrowserClosingReason && pendingEndCall && !endingCall) {
+            startBrowserClosingResponse(pendingBrowserClosingReason);
+            return;
+          }
           maybeCompleteBrowserPendingEndCall("End-call final audio completed");
         });
 
         openai.on("responseCancelled", () => {
           responseActive = false;
           sendEvent({ type: "responseDone" });
+          if (pendingBrowserClosingReason && pendingEndCall && !endingCall) {
+            startBrowserClosingResponse(pendingBrowserClosingReason);
+            return;
+          }
+          maybeCompleteBrowserPendingEndCall("End-call response cancelled");
         });
 
         openai.once("sessionReady", () => {
@@ -2452,6 +2565,7 @@ ${startupRetailContext}`;
       initialGreetingReleaseTimer = null;
     }
     clearBrowserIdleFollowUp();
+    clearProvisionalBrowserBargeInRelease();
     void sendBrowserCallEnded("Browser voice websocket closed");
     openai?.close();
     openai = null;
@@ -2723,6 +2837,58 @@ ${startupRetailContext}`;
     }
   }
 
+  function hasActiveBrowserAssistantPlayback(): boolean {
+    return responseActive || browserPlaybackActive || Boolean(currentAssistantItemId) || currentAssistantAudioSentMs > 0;
+  }
+
+  function clearProvisionalBrowserBargeInRelease(): void {
+    if (provisionalBrowserBargeInReleaseTimer) {
+      clearTimeout(provisionalBrowserBargeInReleaseTimer);
+      provisionalBrowserBargeInReleaseTimer = null;
+    }
+  }
+
+  function releaseProvisionalBrowserBargeIn(): void {
+    clearProvisionalBrowserBargeInRelease();
+    if (!provisionalBrowserBargeInActive) return;
+    provisionalBrowserBargeInActive = false;
+    suppressAssistantOutput = false;
+  }
+
+  function maybeProvisionallyCutBrowserAssistantPlaybackFromTranscript(text: string): void {
+    if (!text.trim()) return;
+    if (!hasActiveBrowserAssistantPlayback()) return;
+    const wordCount = normalizeIntentText(text).split(/\s+/).filter(Boolean).length;
+    if (wordCount < 2 && !isEndCallIntent(text)) return;
+    if (
+      shouldSuppressBrowserUserTranscript(text, {
+        acceptedUserTranscriptCount,
+        browserPlaybackActive,
+        language,
+        lastAssistantAudioAt,
+        lastAssistantDoneAt,
+        lastAssistantTranscript: assistantTranscriptGuard || lastAssistantTranscript,
+        lastBrowserPlaybackEndedAt,
+        responseActive,
+      })
+    ) return;
+    provisionallyCutBrowserAssistantPlayback();
+  }
+
+  function provisionallyCutBrowserAssistantPlayback(): void {
+    if (!openai || pendingEndCall || endingCall || provisionalBrowserBargeInActive) return;
+    if (!hasActiveBrowserAssistantPlayback()) return;
+
+    provisionalBrowserBargeInActive = true;
+    suppressAssistantOutput = true;
+    clearBrowserAssistantPlayback();
+    clearProvisionalBrowserBargeInRelease();
+    provisionalBrowserBargeInReleaseTimer = setTimeout(() => {
+      pendingBrowserUserSpeechStartedAt = null;
+      releaseProvisionalBrowserBargeIn();
+    }, VOICE_PROVISIONAL_BARGE_IN_RELEASE_MS);
+  }
+
   function scheduleBrowserIdleFollowUp(): void {
     clearBrowserIdleFollowUp();
     if (
@@ -2763,6 +2929,28 @@ ${startupRetailContext}`;
     }, POST_RESPONSE_IDLE_FOLLOWUP_MS);
   }
 
+  function startBrowserClosingResponse(reason: string): void {
+    if (!openai || endingCall) return;
+    pendingBrowserClosingReason = null;
+    openai.triggerResponse({
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: getClosingInstruction(reason),
+            },
+          ],
+        },
+      ],
+      output_modalities: ["audio"],
+      instructions:
+        "Say exactly one brief closing in en-US, then stop: \"Thanks for calling Acme Electronics. Have a good rest of your day.\" Do not ask another question.",
+    });
+  }
+
   function requestBrowserGracefulEndCall(reason: string, source: "tool" | "intent" = "intent"): void {
     if (pendingEndCall || endingCall) return;
     clearBrowserIdleFollowUp();
@@ -2781,32 +2969,22 @@ ${startupRetailContext}`;
       data: { reason },
       timestamp: Date.now(),
     });
-    const alreadySaidClosing = /thanks for (calling|your time)|good (rest|day)|have a (great|good|wonderful|nice)|goodbye|take care|bye now/i.test(lastAssistantTranscript);
+    const alreadySaidClosing = isAssistantClosingTranscript(lastAssistantTranscript);
     if (!alreadySaidClosing) {
-      openai?.triggerResponse({
-        input: [
-          {
-            type: "message",
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: getClosingInstruction(reason),
-              },
-            ],
-          },
-        ],
-        output_modalities: ["audio"],
-        instructions:
-          "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
-      });
+      if (responseActive) {
+        pendingBrowserClosingReason = reason;
+      } else {
+        startBrowserClosingResponse(reason);
+      }
     }
     scheduleBrowserEndCall(reason, BROWSER_END_CALL_FALLBACK_MS);
   }
 
   function maybeCompleteBrowserPendingEndCall(reason: string): void {
+    if (pendingBrowserClosingReason) return;
     if (!pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
     setTimeout(() => {
+      if (pendingBrowserClosingReason) return;
       if (!pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
       void completeBrowserEndCall(reason);
     }, 700);

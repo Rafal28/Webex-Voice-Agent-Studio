@@ -14,6 +14,7 @@ interface UseVoiceAgentOptions {
   agentId?: number;
   systemPrompt?: string;
   voice?: string;
+  gender?: string;
   onEvent?: (event: any) => void;
 }
 
@@ -104,7 +105,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         ws.send(JSON.stringify({
           type: "start",
           agentId: options.agentId,
-          config: { systemPrompt: options.systemPrompt, voice: options.voice },
+          config: { systemPrompt: options.systemPrompt, voice: options.voice, gender: options.gender },
         }));
       };
 

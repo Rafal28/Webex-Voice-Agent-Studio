@@ -994,6 +994,7 @@ export default function Evaluate() {
                 agentName={agent.name}
                 systemPrompt={agent.systemPrompt || undefined}
                 voice={agent.voiceModel}
+                gender={agent.gender}
                 onRealtimeEvent={handleRetailRealtimeEvent}
                 assistState={retailAssistState}
                 layout="split"
@@ -1272,6 +1273,7 @@ export default function Evaluate() {
                 agentName={agent.name}
                 systemPrompt={agent.systemPrompt || undefined}
                 voice={agent.voiceModel}
+                gender={agent.gender}
               />
             </TabsContent>
 
