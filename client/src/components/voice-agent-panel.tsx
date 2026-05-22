@@ -568,9 +568,6 @@ function TranscriptBubble({ entry, agentName }: { entry: TranscriptEntry; agentN
             : "rounded-tl-none bg-white/5 border border-white/10"
         }`}>
           {entry.text}
-          {isUser && entry.correctedText && (
-            <span className="text-muted-foreground"> [corrected: {entry.correctedText}]</span>
-          )}
         </div>
       </div>
     </div>

@@ -150,9 +150,9 @@ export default function PstnCall() {
       if ((msg.type === "userTranscript" || msg.type === "assistantTranscript") && msg.text) {
         appendTranscript(
           msg.type === "userTranscript" ? "user" : "assistant",
-          msg.type === "userTranscript" ? msg.rawText || msg.text : msg.text,
+          msg.text,
           msg.timestamp,
-          msg.type === "userTranscript" && msg.corrected ? msg.correctedText || msg.text : undefined
+          msg.type === "userTranscript" && msg.corrected ? msg.rawText : undefined
         );
       }
     };
@@ -448,9 +448,6 @@ function TranscriptBubble({ entry, agentName, callerPhone }: { entry: Transcript
             : "rounded-tl-none border-white/10 bg-white/[0.05]"
         }`}>
           {entry.text}
-          {isUser && entry.correctedText && (
-            <span className="text-muted-foreground"> [corrected: {entry.correctedText}]</span>
-          )}
         </div>
       </div>
     </div>

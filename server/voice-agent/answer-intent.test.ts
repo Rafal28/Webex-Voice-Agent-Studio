@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  classifyAddOnOfferAnswer,
   classifyFinalCheckInAnswer,
   isAssistantAddOnOfferTranscript,
   isCombinedAddOnAndFinalCheckInTranscript,
@@ -59,3 +60,28 @@ assert.equal(
   isStandaloneFinalCheckInTranscript("Nice. The case will pair well with the iPad for the gift. Is there anything else I can help with?"),
   true
 );
+
+const addOnDeclines = [
+  "No, I think I'm good. I'm not interested in that.",
+  "not interested",
+  "I'll pass",
+  "I'm good",
+  "No thanks, don't add that.",
+  "Leave it off.",
+];
+
+const addOnAccepts = [
+  "Yes, please add it.",
+  "I'm interested in that.",
+  "Sure, include it.",
+  "That sounds good.",
+  "I'll take it.",
+];
+
+for (const answer of addOnDeclines) {
+  assert.equal(classifyAddOnOfferAnswer(answer), "negative", answer);
+}
+
+for (const answer of addOnAccepts) {
+  assert.equal(classifyAddOnOfferAnswer(answer), "positive", answer);
+}

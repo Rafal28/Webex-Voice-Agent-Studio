@@ -1,4 +1,5 @@
 export type FinalCheckInAnswerIntent = "negative" | "positive" | "unknown";
+export type AddOnOfferAnswerIntent = "negative" | "positive" | "unknown";
 
 function normalizeAnswerText(text: string): string {
   return String(text || "")
@@ -96,6 +97,29 @@ export function classifyFinalCheckInAnswer(text: string): FinalCheckInAnswerInte
   if (startsWithNegativeAnswer(stripped) || startsWithNegativeAnswer(normalized)) {
     return "negative";
   }
+  return "unknown";
+}
+
+export function classifyAddOnOfferAnswer(text: string): AddOnOfferAnswerIntent {
+  const normalized = normalizeAnswerText(text);
+  if (!normalized) return "unknown";
+  const stripped = stripLeadingDiscourseMarkers(normalized);
+
+  if (
+    /^(no|nope|nah)\b/.test(stripped) ||
+    /^(no thanks|no thank you|ill pass|i will pass|pass|skip|not interested|im not interested|i am not interested|im good|i am good|im all good|i am all good|all good|no need)\b/.test(stripped) ||
+    /\b(dont add|do not add|dont include|do not include|dont want|do not want|leave it off|without that|pass on that|not interested in that|not needed|no need)\b/.test(stripped)
+  ) {
+    return "negative";
+  }
+
+  if (
+    /^(yes|yeah|yep|yup|sure|please|ok|okay|absolutely|definitely|sounds good|that sounds good|great)\b/.test(stripped) ||
+    /\b(add it|add that|include it|include that|reserve it|reserve that|take it|ill take it|i will take it|interested in that|i want that|id like that|i would like that)\b/.test(stripped)
+  ) {
+    return "positive";
+  }
+
   return "unknown";
 }
 

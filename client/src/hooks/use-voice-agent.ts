@@ -208,7 +208,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         break;
       case "userTranscript":
         setUserPartial("");
-        appendTranscript("user", msg.rawText || msg.text, msg.corrected ? msg.text : undefined);
+        appendTranscript("user", msg.text, msg.corrected ? msg.rawText : undefined);
         setState("listening");
         setActivity("ready");
         break;
