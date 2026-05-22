@@ -31,6 +31,12 @@ export interface RealtimeSessionConfig {
   }>;
 }
 
+export interface RealtimeSpeechEvent {
+  item_id?: string;
+  audio_start_ms?: number;
+  audio_end_ms?: number;
+}
+
 export class OpenAIRealtimeClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private apiKey: string;
@@ -120,10 +126,10 @@ export class OpenAIRealtimeClient extends EventEmitter {
         this.emit("responseStarted", event.response);
         break;
       case "input_audio_buffer.speech_started":
-        this.emit("userSpeechStarted");
+        this.emit("userSpeechStarted", event as RealtimeSpeechEvent);
         break;
       case "input_audio_buffer.speech_stopped":
-        this.emit("userSpeechStopped");
+        this.emit("userSpeechStopped", event as RealtimeSpeechEvent);
         break;
       case "response.audio.delta":
       case "response.output_audio.delta":
@@ -176,9 +182,14 @@ export class OpenAIRealtimeClient extends EventEmitter {
         });
         break;
       case "response.done":
-        this.emit("responseDone", event.response);
+        if (isCancelledRealtimeResponse(event.response)) {
+          this.emit("responseCancelled", event.response);
+        } else {
+          this.emit("responseDone", event.response);
+        }
         break;
       case "response.cancelled":
+      case "response.canceled":
         this.emit("responseCancelled");
         break;
       case "error":
@@ -265,6 +276,11 @@ function isBenignRealtimeError(error: any): boolean {
     /Audio content of \d+ms is already shorter than \d+ms/.test(message) ||
     /Tool call ID 'call_[^']+' not found in conversation/.test(message)
   );
+}
+
+function isCancelledRealtimeResponse(response: any): boolean {
+  const status = String(response?.status || "").toLowerCase();
+  return status === "cancelled" || status === "canceled";
 }
 
 function getRealtimeAudioFormat(format: RealtimeSessionConfig["inputAudioFormat"]): { type: string; rate?: 24000 } {
