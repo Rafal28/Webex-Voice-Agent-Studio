@@ -23,6 +23,7 @@ import {
   isAssistantAddOnOfferTranscript,
   isAssistantWaitingForCallerAnswerTranscript,
   isAnythingElseCheckInTranscript,
+  isIncompleteUserRequestTranscript,
   isNoMoreHelpAnswerTranscript,
   isStandaloneFinalCheckInTranscript,
 } from "./answer-intent";
@@ -343,7 +344,7 @@ function buildTwilioCallInstructions(
         ? `Do not offer an optional call-summary text message in this demo. For reservation confirmations, use the WhatsApp confirmation wording after a reservation is created.`
         : `Do not offer SMS or text-message delivery in this demo. For reservation confirmations, use the email confirmation wording after a reservation is created.`;
   const callerIdentityInstructions = returningCallerName
-    ? `The PSTN caller ID produced an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. After the caller states their intent, say you found a profile based on their phone number and ask them to confirm their first and last name. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context.`
+    ? `The PSTN caller ID produced an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. Do not ask for profile confirmation after a vague, incomplete, or generic browsing request. For generic product/category/price/availability questions, answer normally first. Ask for first-and-last-name confirmation only before using customer-specific context, history, preferences, personalized recommendations, or creating a reservation. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context.`
     : `The caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
 
   return `Always respond in English unless the caller explicitly asks for another language.
@@ -380,7 +381,7 @@ CRITICAL CALL CONTEXT:
 function buildBrowserCallInstructions(baseInstructions: string, returningCallerName?: string): string {
   const confirmationSpokenRoute = getDemoConfirmationSpokenRoute();
   const browserIdentityInstructions = returningCallerName
-    ? `This browser demo session has an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. After the caller states their intent, say you found a profile based on their phone number and ask them to confirm their first and last name. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context.`
+    ? `This browser demo session has an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. Do not ask for profile confirmation after a vague, incomplete, or generic browsing request. For generic product/category/price/availability questions, answer normally first. Ask for first-and-last-name confirmation only before using customer-specific context, history, preferences, personalized recommendations, or creating a reservation. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context.`
     : `The browser caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
 
   return `Always respond in English unless the user explicitly asks for another language.
@@ -1286,7 +1287,8 @@ function handleTwilioSession(ws: WebSocket): void {
 # Unverified Returning Caller Candidate
 
 The PSTN caller ID found a possible returning customer, but identity is not confirmed yet.
-After the caller states their intent, say you found a profile based on their phone number and ask them to confirm their first and last name before loading history or using customer-specific context.
+For generic product/category/price/availability questions, answer normally first and do not ask for profile confirmation yet.
+Ask for first-and-last-name confirmation only before using customer-specific context, history, preferences, personalized recommendations, or creating a reservation.
 
 ${startupRetailContext}`;
         }
@@ -1364,6 +1366,12 @@ ${startupRetailContext}`;
           console.log(`[VoiceAgent/Twilio] User: ${text}`);
           const trimmed = text.trim();
           if (!trimmed) return;
+          if (isIncompleteUserRequestTranscript(trimmed)) {
+            console.warn(`[VoiceAgent/Twilio] Suppressed incomplete user request fragment: ${trimmed}`);
+            releaseProvisionalTwilioBargeIn();
+            clearPendingTwilioUserSpeechCandidate();
+            return;
+          }
           if (
             shouldSuppressTwilioUserTranscript(trimmed, {
               lastAssistantAudioAt,
@@ -2603,7 +2611,8 @@ function handleBrowserSession(ws: WebSocket): void {
 # Unverified Browser Demo Caller Candidate
 
 This browser demo call found a possible returning customer, but identity is not confirmed yet.
-After the caller states their intent, say you found a profile based on their phone number and ask them to confirm their first and last name before loading history or using customer-specific context.
+For generic product/category/price/availability questions, answer normally first and do not ask for profile confirmation yet.
+Ask for first-and-last-name confirmation only before using customer-specific context, history, preferences, personalized recommendations, or creating a reservation.
 
 ${startupRetailContext}`;
         }
@@ -2685,6 +2694,16 @@ ${startupRetailContext}`;
 
         const handleBrowserUserTranscript = async (text: string): Promise<void> => {
           const trimmed = text.trim();
+          if (!trimmed) return;
+          if (isIncompleteUserRequestTranscript(trimmed)) {
+            console.warn(`[VoiceAgent/Browser] Suppressed incomplete user request fragment: ${trimmed}`);
+            releaseProvisionalBrowserBargeIn();
+            clearPendingBrowserUserSpeechCandidate();
+            browserUserSpeechUiActive = false;
+            sendEvent({ type: "userTranscriptSuppressed" });
+            sendEvent({ type: "userSpeechStopped", timestamp: Date.now() });
+            return;
+          }
           if (initialGreetingActive) {
             console.warn(`[VoiceAgent/Browser] Suppressed user transcript during opening greeting: ${trimmed}`);
             releaseProvisionalBrowserBargeIn();

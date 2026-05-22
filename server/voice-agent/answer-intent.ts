@@ -84,6 +84,16 @@ export function isAssistantWaitingForCallerAnswerTranscript(text: string): boole
   );
 }
 
+export function isIncompleteUserRequestTranscript(text: string): boolean {
+  const normalized = normalizeAnswerText(text);
+  if (!normalized) return false;
+  const withoutGreeting = normalized.replace(/^(hi|hello|hey|hi there|hello there|hey there)\s+/, "");
+  return (
+    /^(id like to|i would like to|i want to|i need to|im looking to|i am looking to|im calling to|i am calling to|i was calling to|im calling about|i am calling about|i was calling about|i want|i need|im looking for|i am looking for)$/.test(withoutGreeting) ||
+    /\b(id like to|i would like to|i want to|i need to|im looking to|i am looking to|im calling to|i am calling to|i was calling to|im calling about|i am calling about|i was calling about)$/.test(withoutGreeting)
+  );
+}
+
 function startsWithNegativeAnswer(text: string): boolean {
   return /^(no|nope|nah|not really|negative)\b/.test(text);
 }

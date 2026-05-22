@@ -5,6 +5,7 @@ import {
   isAssistantAddOnOfferTranscript,
   isAssistantWaitingForCallerAnswerTranscript,
   isCombinedAddOnAndFinalCheckInTranscript,
+  isIncompleteUserRequestTranscript,
   isNoMoreHelpAnswerTranscript,
   isStandaloneFinalCheckInTranscript,
 } from "./answer-intent";
@@ -75,6 +76,12 @@ assert.equal(
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can check availability at your preferred pickup store next."), true);
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can have it ready for pickup tomorrow at 2 PM. Would that work?"), true);
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("The iPad mini is available in Silver."), false);
+
+assert.equal(isIncompleteUserRequestTranscript("Hello, I'd like to"), true);
+assert.equal(isIncompleteUserRequestTranscript("I'd like to"), true);
+assert.equal(isIncompleteUserRequestTranscript("I was calling about"), true);
+assert.equal(isIncompleteUserRequestTranscript("Hi, I was calling about a few tablet options."), false);
+assert.equal(isIncompleteUserRequestTranscript("I'd like to buy an iPad."), false);
 
 const addOnDeclines = [
   "No, I think I'm good. I'm not interested in that.",
