@@ -21,6 +21,7 @@ import {
   classifyAddOnOfferAnswer,
   classifyFinalCheckInAnswer,
   isAssistantAddOnOfferTranscript,
+  isAssistantWaitingForCallerAnswerTranscript,
   isAnythingElseCheckInTranscript,
   isNoMoreHelpAnswerTranscript,
   isStandaloneFinalCheckInTranscript,
@@ -596,11 +597,7 @@ function getIdleFollowUpInstruction(lastAssistantTranscript: string): string {
 }
 
 function isWaitingForCallerAnswer(text: string): boolean {
-  const normalized = text.toLowerCase();
-  return (
-    normalized.includes("?") ||
-    /\b(would you like|would you prefer|what time|what day|what date|when would|which store|which one|does that work|can you confirm|could you confirm|let me know|tell me what|tell me when)\b/.test(normalized)
-  );
+  return isAssistantWaitingForCallerAnswerTranscript(text);
 }
 
 function publicSmsFailureMessage(reservation?: RetailReservationDetails | null): string {

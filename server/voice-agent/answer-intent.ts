@@ -74,6 +74,16 @@ export function isStandaloneFinalCheckInTranscript(text: string): boolean {
   return isAnythingElseCheckInTranscript(text) && !isCombinedAddOnAndFinalCheckInTranscript(text);
 }
 
+export function isAssistantWaitingForCallerAnswerTranscript(text: string): boolean {
+  const raw = String(text || "").toLowerCase();
+  const normalized = normalizeAnswerText(text);
+  return (
+    raw.includes("?") ||
+    /\b(would you like|would you prefer|if youd like|if you would like|what time|what day|what date|when would|which store|which one|does that work|can you confirm|could you confirm|let me know|tell me what|tell me when)\b/.test(normalized) ||
+    /\b(i can|i could|i can also|i could also)\s+(check|look up|confirm)\b.*\b(availability|preferred pickup store|pickup store|store|next)\b/.test(normalized)
+  );
+}
+
 function startsWithNegativeAnswer(text: string): boolean {
   return /^(no|nope|nah|not really|negative)\b/.test(text);
 }

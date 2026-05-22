@@ -3,6 +3,7 @@ import {
   classifyAddOnOfferAnswer,
   classifyFinalCheckInAnswer,
   isAssistantAddOnOfferTranscript,
+  isAssistantWaitingForCallerAnswerTranscript,
   isCombinedAddOnAndFinalCheckInTranscript,
   isNoMoreHelpAnswerTranscript,
   isStandaloneFinalCheckInTranscript,
@@ -64,6 +65,16 @@ assert.equal(
   isStandaloneFinalCheckInTranscript("Nice. The case will pair well with the iPad for the gift. Is there anything else I can help with?"),
   true
 );
+
+assert.equal(
+  isAssistantWaitingForCallerAnswerTranscript(
+    "For the iPad mini, the option available in our catalog is Silver. If you’d like, I can check availability at your preferred pickup store next."
+  ),
+  true
+);
+assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can check availability at your preferred pickup store next."), true);
+assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can have it ready for pickup tomorrow at 2 PM. Would that work?"), true);
+assert.equal(isAssistantWaitingForCallerAnswerTranscript("The iPad mini is available in Silver."), false);
 
 const addOnDeclines = [
   "No, I think I'm good. I'm not interested in that.",
