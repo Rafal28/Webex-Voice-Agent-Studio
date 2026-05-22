@@ -79,8 +79,9 @@ export function isAssistantWaitingForCallerAnswerTranscript(text: string): boole
   const normalized = normalizeAnswerText(text);
   return (
     raw.includes("?") ||
-    /\b(would you like|would you prefer|if youd like|if you would like|what time|what day|what date|when would|which store|which one|does that work|can you confirm|could you confirm|please confirm|confirm your|let me know|tell me what|tell me when)\b/.test(normalized) ||
-    /\b(i can|i could|i can also|i could also)\s+(check|look up|confirm)\b.*\b(availability|preferred pickup store|pickup store|store|next)\b/.test(normalized)
+    /\b(would you like|would you prefer|if youd like|if you would like|if you want|if you need|if you prefer|what time|what day|what date|when would|which store|which one|does that work|can you confirm|could you confirm|please confirm|confirm your|let me know|tell me what|tell me when)\b/.test(normalized) ||
+    /\b(i can|i could|i can also|i could also|i can help|i could help|we can|we could)\b.*\b(check|look up|confirm|look at|find|show|walk through|compare)\b.*\b(availability|preferred pickup store|pickup store|store|next|other|different|alternative|alternatives|models|options|colors)\b/.test(normalized) ||
+    /\b(if you want|if you need|if you prefer|if youd like|if you would like)\b.*\b(other|different|alternative|alternatives|models|options|colors|look at|help you)\b/.test(normalized)
   );
 }
 

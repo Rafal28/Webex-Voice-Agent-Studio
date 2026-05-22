@@ -76,6 +76,13 @@ assert.equal(
 );
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can check availability at your preferred pickup store next."), true);
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can have it ready for pickup tomorrow at 2 PM. Would that work?"), true);
+assert.equal(
+  isAssistantWaitingForCallerAnswerTranscript(
+    "For the iPad Pro 11-inch we carry, the available color option is Blue. If you want a different color, I can help you look at other models or alternatives."
+  ),
+  true
+);
+assert.equal(isAssistantWaitingForCallerAnswerTranscript("If you prefer another color, we can look at different options."), true);
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("The iPad mini is available in Silver."), false);
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("Please confirm your first and last name."), true);
 assert.equal(
