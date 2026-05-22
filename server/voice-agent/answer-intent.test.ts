@@ -25,6 +25,9 @@ const negativeAnswers = [
   "No, I think that's possible.",
   "No, I think we're good.",
   "No, I'll pass.",
+  "I think that's good for now.",
+  "That's good for now.",
+  "That works for now.",
 ];
 
 const positiveAnswers = [
