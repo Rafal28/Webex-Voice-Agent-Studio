@@ -32,6 +32,7 @@ const BROWSER_END_CALL_FALLBACK_MS = 7000;
 const END_CALL_FALLBACK_RECHECK_MS = 1000;
 const TWILIO_END_CALL_MAX_WAIT_MS = 22000;
 const BROWSER_END_CALL_MAX_WAIT_MS = 18000;
+const ACCEPTED_USER_TURN_RESPONSE_TIMEOUT_MS = 3200;
 const FINAL_CHECK_IN_TEXT = "Is there anything else I can help with?";
 const FINAL_CLOSING_TEXT = "Thanks for calling Acme Electronics. Have a good rest of your day.";
 const REALTIME_TRANSCRIPTION_LANGUAGE = "en";
@@ -429,6 +430,7 @@ function isEndCallIntent(text: string): boolean {
   const normalized = normalizeIntentText(text);
   if (!normalized) return false;
   if (/\b(dont|do not|not)\s+(end|hang up|disconnect|stop)\b/.test(normalized)) return false;
+  if (isNoMoreHelpAnswerTranscript(normalized)) return true;
   if (/^(bye|goodbye|bye bye|thanks bye|thank you bye|ok bye|okay bye)$/.test(normalized)) return true;
   if (/^(thats all|that is all|im done|i am done|were done|we are done|no thats all|no that is all)$/.test(normalized)) return true;
   if (/^(thats|that is|thatll be|that will be) all( i (had|have|needed|need))?$/.test(normalized)) return true;
@@ -467,8 +469,15 @@ function isSoftDeclineTranscript(text: string): boolean {
   return /^(no thanks|no thank you|im good|i am good|im good with that|i am good with that|no im good|no i am good|no im good with that|no i am good with that|im all set|i am all set|no im all set|no i am all set|thats okay|that is okay|no thats okay|no that is okay)$/.test(normalized);
 }
 
+function isNoMoreHelpAnswerTranscript(text: string): boolean {
+  const normalized = normalizeIntentText(text);
+  return /^(no|nope|nah)( thanks| thank you)?( thats all| that is all| thats it| that is it| im good| i am good| im all good| i am all good| im all set| i am all set| all good| thats all good| that is all good)?( thanks| thank you)?$/.test(normalized) ||
+    /^(all good|thats all good|that is all good|thats it|that is it|thats all|that is all)( thanks| thank you)?$/.test(normalized) ||
+    /^(nothing else|no more questions|no i dont need anything else|no i do not need anything else|i dont need anything else|i do not need anything else|no i dont want anything else|no i do not want anything else|i dont want anything else|i do not want anything else|no thank you thats all)$/.test(normalized);
+}
+
 function isNegativeAnswerTranscript(text: string): boolean {
-  return /^(no|nope|nah|no thanks|no thank you)$/i.test(normalizeIntentText(text));
+  return /^(no|nope|nah|no thanks|no thank you)$/i.test(normalizeIntentText(text)) || isNoMoreHelpAnswerTranscript(text);
 }
 
 function canEndCallFromUserTranscript(text: string, lastAssistantTranscript: string): boolean {
@@ -1114,6 +1123,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let startupRetailContext = "";
   let twilioResponseActive = false;
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
+  let userTurnResponseTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
   let pendingTwilioUserSpeechStartedAt: number | null = null;
@@ -1156,6 +1166,7 @@ function handleTwilioSession(ws: WebSocket): void {
         twilioTranscriptPreview = "";
         provisionalTwilioBargeInActive = false;
         clearProvisionalTwilioBargeInRelease();
+        clearTwilioUserTurnResponseWatchdog();
         callerPhone = typeof params.callerPhone === "string" && params.callerPhone.trim()
           ? params.callerPhone.trim()
           : "Unknown";
@@ -1339,6 +1350,7 @@ ${startupRetailContext}`;
         });
 
         openai.on("responseStarted", () => {
+          clearTwilioUserTurnResponseWatchdog();
           twilioResponseActive = true;
           clearTwilioIdleFollowUp();
           suppressAssistantOutput = false;
@@ -1419,7 +1431,7 @@ ${startupRetailContext}`;
                   data: rejectedResult.data,
                   timestamp: Date.now(),
                 });
-                openai?.sendFunctionOutput(callId, JSON.stringify(rejectedResult));
+                sendTwilioFunctionOutput(callId, JSON.stringify(rejectedResult));
                 return;
               }
               if (
@@ -1445,13 +1457,13 @@ ${startupRetailContext}`;
                   data: rejectedResult.data,
                   timestamp: Date.now(),
                 });
-                openai?.sendFunctionOutput(callId, JSON.stringify(rejectedResult), false);
+                sendTwilioFunctionOutput(callId, JSON.stringify(rejectedResult), false);
                 requestTwilioFinalCheckIn(reason);
                 return;
               }
               const result = createEndCallResult(reason);
               console.log(`[VoiceAgent/Twilio] Function result:`, result);
-              openai?.sendFunctionOutput(callId, JSON.stringify(result), false);
+              sendTwilioFunctionOutput(callId, JSON.stringify(result), false);
               requestTwilioGracefulEndCall(reason, "tool");
               return;
             }
@@ -1558,11 +1570,11 @@ ${startupRetailContext}`;
               console.warn(`[VoiceAgent/Twilio] Skipping stale function output for ${name}`);
               return;
             }
-            openai?.sendFunctionOutput(callId, JSON.stringify(result));
+            sendTwilioFunctionOutput(callId, JSON.stringify(result));
           } catch (e: any) {
             console.error(`[VoiceAgent/Twilio] Function execution failed:`, e);
             if (pendingEndCall || endingCall || suppressAssistantOutput) return;
-            openai?.sendFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
+            sendTwilioFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
           }
         });
 
@@ -1625,6 +1637,7 @@ ${startupRetailContext}`;
         maybeCompleteTwilioPendingEndCall("End-call audio played");
         break;
       case "stop":
+        clearTwilioUserTurnResponseWatchdog();
         openai?.close();
         sendCallEnded();
         break;
@@ -1633,6 +1646,7 @@ ${startupRetailContext}`;
 
   ws.on("close", () => {
     clearTwilioIdleFollowUp();
+    clearTwilioUserTurnResponseWatchdog();
     clearProvisionalTwilioBargeInRelease();
     openai?.close();
     sendCallEnded();
@@ -1996,6 +2010,44 @@ ${startupRetailContext}`;
     }
   }
 
+  function clearTwilioUserTurnResponseWatchdog(): void {
+    if (userTurnResponseTimer) {
+      clearTimeout(userTurnResponseTimer);
+      userTurnResponseTimer = null;
+    }
+  }
+
+  function scheduleTwilioUserTurnResponseWatchdog(reason: string): void {
+    clearTwilioUserTurnResponseWatchdog();
+    userTurnResponseTimer = setTimeout(() => {
+      userTurnResponseTimer = null;
+      if (!openai || pendingEndCall || endingCall || twilioResponseActive) return;
+      console.warn(`[VoiceAgent/Twilio] Retrying stalled response after accepted user turn: ${reason}`);
+      openai.triggerResponse({
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: `The caller just said: "${lastUserTranscript}". Continue the retail flow with one concise, helpful response. If they selected a product option, proceed with the selected option and the next required action.`,
+              },
+            ],
+          },
+        ],
+        output_modalities: ["audio"],
+      });
+    }, ACCEPTED_USER_TURN_RESPONSE_TIMEOUT_MS);
+  }
+
+  function sendTwilioFunctionOutput(callId: string, output: string, createResponse = true): void {
+    openai?.sendFunctionOutput(callId, output, createResponse);
+    if (createResponse) {
+      scheduleTwilioUserTurnResponseWatchdog("function output response did not start");
+    }
+  }
+
   function hasActiveTwilioAssistantPlayback(): boolean {
     return twilioResponseActive || markQueue.length > 0 || responseStartTs !== null || currentTwilioAudioSentMs > 0;
   }
@@ -2103,11 +2155,13 @@ ${startupRetailContext}`;
         if (!openai || pendingEndCall || endingCall) return;
         suppressAssistantOutput = false;
         openai.triggerResponse();
+        scheduleTwilioUserTurnResponseWatchdog("cancelled interrupted assistant response did not restart");
       }, interruptedAssistant ? 150 : 0);
       return;
     }
 
     openai.triggerResponse();
+    scheduleTwilioUserTurnResponseWatchdog("accepted user turn response did not start");
   }
 
   function scheduleTwilioIdleFollowUp(): void {
@@ -2313,6 +2367,7 @@ function handleBrowserSession(ws: WebSocket): void {
   let inventoryLookupSucceeded = false;
   let startupRetailContext = "";
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
+  let userTurnResponseTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
   let pendingBrowserUserSpeechStartedAt: number | null = null;
@@ -2364,6 +2419,7 @@ function handleBrowserSession(ws: WebSocket): void {
         provisionalBrowserBargeInActive = false;
         clearProvisionalBrowserBargeInRelease();
         clearBrowserIdleFollowUp();
+        clearBrowserUserTurnResponseWatchdog();
         transcriptEntries.length = 0;
 
         if (agentId) {
@@ -2437,6 +2493,7 @@ ${startupRetailContext}`;
         });
 
         openai.on("responseStarted", () => {
+          clearBrowserUserTurnResponseWatchdog();
           responseActive = true;
           clearBrowserIdleFollowUp();
           suppressAssistantOutput = false;
@@ -2687,7 +2744,7 @@ ${startupRetailContext}`;
                   data: rejectedResult.data,
                   timestamp: Date.now(),
                 });
-                openai?.sendFunctionOutput(callId, JSON.stringify(rejectedResult));
+                sendBrowserFunctionOutput(callId, JSON.stringify(rejectedResult));
                 return;
               }
               if (
@@ -2711,13 +2768,13 @@ ${startupRetailContext}`;
                   data: rejectedResult.data,
                   timestamp: Date.now(),
                 });
-                openai?.sendFunctionOutput(callId, JSON.stringify(rejectedResult), false);
+                sendBrowserFunctionOutput(callId, JSON.stringify(rejectedResult), false);
                 requestBrowserFinalCheckIn(reason);
                 return;
               }
               const result = createEndCallResult(reason);
               console.log(`[VoiceAgent/Browser] Function result:`, result);
-              openai?.sendFunctionOutput(callId, JSON.stringify(result), false);
+              sendBrowserFunctionOutput(callId, JSON.stringify(result), false);
               requestBrowserGracefulEndCall(reason, "tool");
               return;
             }
@@ -2815,11 +2872,11 @@ ${startupRetailContext}`;
               console.warn(`[VoiceAgent/Browser] Skipping stale function output for ${name}`);
               return;
             }
-            openai?.sendFunctionOutput(callId, JSON.stringify(result));
+            sendBrowserFunctionOutput(callId, JSON.stringify(result));
           } catch (e: any) {
             console.error(`[VoiceAgent/Browser] Function execution failed:`, e);
             if (pendingEndCall || endingCall || suppressAssistantOutput) return;
-            openai?.sendFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
+            sendBrowserFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
           }
         });
 
@@ -2827,6 +2884,7 @@ ${startupRetailContext}`;
         sendEvent({ type: "connected" });
       } else if (msg.type === "stop") {
         clearBrowserIdleFollowUp();
+        clearBrowserUserTurnResponseWatchdog();
         void sendBrowserCallEnded("Browser voice session stopped");
         openai?.close();
         openai = null;
@@ -2857,6 +2915,7 @@ ${startupRetailContext}`;
       initialGreetingReleaseTimer = null;
     }
     clearBrowserIdleFollowUp();
+    clearBrowserUserTurnResponseWatchdog();
     clearProvisionalBrowserBargeInRelease();
     void sendBrowserCallEnded("Browser voice websocket closed");
     openai?.close();
@@ -3136,6 +3195,44 @@ ${startupRetailContext}`;
     if (idleFollowUpTimer) {
       clearTimeout(idleFollowUpTimer);
       idleFollowUpTimer = null;
+    }
+  }
+
+  function clearBrowserUserTurnResponseWatchdog(): void {
+    if (userTurnResponseTimer) {
+      clearTimeout(userTurnResponseTimer);
+      userTurnResponseTimer = null;
+    }
+  }
+
+  function scheduleBrowserUserTurnResponseWatchdog(reason: string): void {
+    clearBrowserUserTurnResponseWatchdog();
+    userTurnResponseTimer = setTimeout(() => {
+      userTurnResponseTimer = null;
+      if (!openai || pendingEndCall || endingCall || responseActive) return;
+      console.warn(`[VoiceAgent/Browser] Retrying stalled response after accepted user turn: ${reason}`);
+      openai.triggerResponse({
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: `The user just said: "${lastUserTranscript}". Continue the retail flow with one concise, helpful response. If they selected a product option, proceed with the selected option and the next required action.`,
+              },
+            ],
+          },
+        ],
+        output_modalities: ["audio"],
+      });
+    }, ACCEPTED_USER_TURN_RESPONSE_TIMEOUT_MS);
+  }
+
+  function sendBrowserFunctionOutput(callId: string, output: string, createResponse = true): void {
+    openai?.sendFunctionOutput(callId, output, createResponse);
+    if (createResponse) {
+      scheduleBrowserUserTurnResponseWatchdog("function output response did not start");
     }
   }
 
@@ -3424,11 +3521,13 @@ ${startupRetailContext}`;
         if (!openai || pendingEndCall || endingCall) return;
         suppressAssistantOutput = false;
         openai.triggerResponse();
+        scheduleBrowserUserTurnResponseWatchdog("cancelled interrupted assistant response did not restart");
       }, interruptedAssistant ? 150 : 0);
       return;
     }
 
     openai.triggerResponse();
+    scheduleBrowserUserTurnResponseWatchdog("accepted user turn response did not start");
   }
 
   function scheduleInitialGreetingRelease(delayMs: number): void {
