@@ -38,6 +38,30 @@ function hasAdditionalHelpRequest(text: string): boolean {
   );
 }
 
+export function isAnythingElseCheckInTranscript(text: string): boolean {
+  const normalized = normalizeAnswerText(text);
+  return /\b(anything else|anything more|something else|anything i can help|else i can help|need anything else|help with anything else)\b/.test(normalized);
+}
+
+export function isAssistantAddOnOfferTranscript(text: string): boolean {
+  const normalized = normalizeAnswerText(text);
+  if (!normalized) return false;
+  const offersAccessory =
+    /\b(would you like|do you want|should i|can i|shall i)\b.*\b(add|include|reserve|hold|set aside)\b/.test(normalized) ||
+    /\b(add|include|reserve|hold|set aside)\b.*\b(for you|to go along|with it|with that|for the)\b/.test(normalized);
+  const mentionsAccessory =
+    /\b(add on|addon|accessory|case|cover|folio|protector|charger|keyboard|pencil|stylus|band|headphones|earbuds)\b/.test(normalized);
+  return offersAccessory && mentionsAccessory;
+}
+
+export function isCombinedAddOnAndFinalCheckInTranscript(text: string): boolean {
+  return isAssistantAddOnOfferTranscript(text) && isAnythingElseCheckInTranscript(text);
+}
+
+export function isStandaloneFinalCheckInTranscript(text: string): boolean {
+  return isAnythingElseCheckInTranscript(text) && !isCombinedAddOnAndFinalCheckInTranscript(text);
+}
+
 function startsWithNegativeAnswer(text: string): boolean {
   return /^(no|nope|nah|not really|negative)\b/.test(text);
 }

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { classifyFinalCheckInAnswer, isNoMoreHelpAnswerTranscript } from "./answer-intent";
+import {
+  classifyFinalCheckInAnswer,
+  isAssistantAddOnOfferTranscript,
+  isCombinedAddOnAndFinalCheckInTranscript,
+  isNoMoreHelpAnswerTranscript,
+  isStandaloneFinalCheckInTranscript,
+} from "./answer-intent";
 
 const negativeAnswers = [
   "No, that's all good, thank you.",
@@ -41,3 +47,15 @@ for (const answer of positiveAnswers) {
   assert.equal(classifyFinalCheckInAnswer(answer), "positive", answer);
   assert.equal(isNoMoreHelpAnswerTranscript(answer), false, answer);
 }
+
+const combinedAddOnAndCheckIn =
+  "In our previous conversations you mentioned this is a birthday gift for your daughter and that she loves purple — would you like me to add a Purple Protective Case to go along with it? Is there anything else I can help with?";
+
+assert.equal(isAssistantAddOnOfferTranscript(combinedAddOnAndCheckIn), true);
+assert.equal(isCombinedAddOnAndFinalCheckInTranscript(combinedAddOnAndCheckIn), true);
+assert.equal(isStandaloneFinalCheckInTranscript(combinedAddOnAndCheckIn), false);
+assert.equal(isStandaloneFinalCheckInTranscript("Is there anything else I can help with?"), true);
+assert.equal(
+  isStandaloneFinalCheckInTranscript("Nice. The case will pair well with the iPad for the gift. Is there anything else I can help with?"),
+  true
+);
