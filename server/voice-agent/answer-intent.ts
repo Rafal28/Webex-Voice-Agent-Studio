@@ -27,12 +27,23 @@ function hasAdditionalHelpRequest(text: string): boolean {
   if (/\b(dont|do not|no need|not now|not right now)\b.*\b(need|want|have|anything|something|else|more)\b/.test(text)) {
     return false;
   }
+  const negativeLeadInRequest =
+    /^(no|nope|nah|not really|negative)\s+(but\s+|actually\s+|i think\s+|i guess\s+|maybe\s+|i mean\s+|)?/.test(text) &&
+    (
+      /\b(how about|what about|instead|another|different|change|switch|move|reschedule|pickup|pick it up|pick up|reserve|hold)\b/.test(text) ||
+      /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|morning|afternoon|evening|tonight|am|pm|oclock|o clock)\b/.test(text) ||
+      /\b(palo alto|fremont|san jose)\b/.test(text) ||
+      /\b((can|could|would|will)\s+you|i\s+(still\s+)?(need|want|would like|have)|we\s+(still\s+)?(need|want|would like|have))\b/.test(text)
+    );
   return (
+    negativeLeadInRequest ||
     /^(yes|yeah|yep|yup|sure|please|absolutely|definitely|i do|we do|i have|we have|there is|theres|there are)\b/.test(text) ||
     /^(can|could|would|will)\s+you\b/.test(text) ||
     /^(i|we)\s+(still\s+)?(need|want|would like|have|am looking for|are looking for|am looking|are looking)\b/.test(text) ||
+    /\bi\s+(said\s+)?(still\s+)?want\s+to\s+(pick|pick up|reserve|hold|change|move|set)\b/.test(text) ||
     /^(help me|show me|tell me|find|look up|check|reserve|add|change|cancel|send)\b/.test(text) ||
     /^(do you have|is there|are there|what about|how about)\b/.test(text) ||
+    /\b(what about|how about)\b/.test(text) ||
     /\b(one more thing|another thing|something else|one question|quick question|another question|i have a question|i have another question)\b/.test(text) ||
     /\b(also|actually)\b.*\b(can|could|would|need|want|looking|check|find|show|reserve|add|change|send)\b/.test(text) ||
     /^(no|nope|nah)\s+(but\s+|actually\s+|i think\s+|i guess\s+|maybe\s+)?((can|could|would|will)\s+you|i\s+(still\s+)?(need|want|would like|have)|we\s+(still\s+)?(need|want|would like|have))\b/.test(text)

@@ -37,6 +37,10 @@ const positiveAnswers = [
   "No, I think I need the case too.",
   "No, but can you check another pickup time?",
   "No, I still need help with the keyboard.",
+  "Not really. How about on Tuesday at four o'clock?",
+  "No, how about Palo Alto instead?",
+  "No, Tuesday at 4 PM would work better.",
+  "Yeah, I mean I said I want to pick it up on Tuesday at 4 o'clock.",
 ];
 
 for (const answer of negativeAnswers) {
