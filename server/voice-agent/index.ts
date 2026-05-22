@@ -17,6 +17,7 @@ import {
   type ReservationDeliveryChannel,
   type ReservationSpokenDeliveryRoute,
 } from "./reservation-delivery";
+import { classifyFinalCheckInAnswer, isNoMoreHelpAnswerTranscript } from "./answer-intent";
 
 const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
 const BROWSER_TRANSCRIPT_ECHO_GUARD_MS = 650;
@@ -469,24 +470,18 @@ function isSoftDeclineTranscript(text: string): boolean {
   return /^(no thanks|no thank you|im good|i am good|im good with that|i am good with that|no im good|no i am good|no im good with that|no i am good with that|im all set|i am all set|no im all set|no i am all set|thats okay|that is okay|no thats okay|no that is okay)$/.test(normalized);
 }
 
-function isNoMoreHelpAnswerTranscript(text: string): boolean {
-  const normalized = normalizeIntentText(text);
-  return /^(no|nope|nah)( thanks| thank you)?( thats all| that is all| thats it| that is it| im good| i am good| im all good| i am all good| im all set| i am all set| all good| thats all good| that is all good)?( thanks| thank you)?$/.test(normalized) ||
-    /^(all good|thats all good|that is all good|thats it|that is it|thats all|that is all)( thanks| thank you)?$/.test(normalized) ||
-    /^(nothing else|no more questions|no i dont need anything else|no i do not need anything else|i dont need anything else|i do not need anything else|no i dont want anything else|no i do not want anything else|i dont want anything else|i do not want anything else|no thank you thats all)$/.test(normalized);
-}
-
 function isNegativeAnswerTranscript(text: string): boolean {
   return /^(no|nope|nah|no thanks|no thank you)$/i.test(normalizeIntentText(text)) || isNoMoreHelpAnswerTranscript(text);
 }
 
-function canEndCallFromUserTranscript(text: string, lastAssistantTranscript: string): boolean {
+function canEndCallFromUserTranscript(text: string, lastAssistantTranscript: string, finalCheckInAsked = false): boolean {
   if (isDefiniteEndCallIntent(text)) return true;
-  return isAnythingElseCheckInTranscript(lastAssistantTranscript) && (isEndCallIntent(text) || isNegativeAnswerTranscript(text));
+  const checkInWasAsked = finalCheckInAsked || isAnythingElseCheckInTranscript(lastAssistantTranscript);
+  return checkInWasAsked && (isEndCallIntent(text) || isNegativeAnswerTranscript(text));
 }
 
-function shouldAskFinalCheckInBeforeEnding(text: string, lastAssistantTranscript: string): boolean {
-  if (isAnythingElseCheckInTranscript(lastAssistantTranscript)) return false;
+function shouldAskFinalCheckInBeforeEnding(text: string, lastAssistantTranscript: string, finalCheckInAsked = false): boolean {
+  if (finalCheckInAsked || isAnythingElseCheckInTranscript(lastAssistantTranscript)) return false;
   if (isDefiniteEndCallIntent(text)) return false;
   return isSoftDeclineTranscript(text) || isEndCallIntent(text);
 }
@@ -1132,6 +1127,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let twilioTranscriptPreview = "";
   let pendingTwilioClosingReason: string | null = null;
   let pendingTwilioFinalCheckInReason: string | null = null;
+  let twilioFinalCheckInAsked = false;
   let twilioEndCallFallbackStartedAt: number | null = null;
   let provisionalTwilioBargeInActive = false;
   let provisionalTwilioBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1159,6 +1155,7 @@ function handleTwilioSession(ws: WebSocket): void {
         suppressAssistantOutput = false;
         pendingTwilioClosingReason = null;
         pendingTwilioFinalCheckInReason = null;
+        twilioFinalCheckInAsked = false;
         twilioEndCallFallbackStartedAt = null;
         pendingTwilioUserSpeechStartedAt = null;
         pendingTwilioUserSpeechAudioStartMs = null;
@@ -1336,9 +1333,16 @@ ${startupRetailContext}`;
           });
           releaseProvisionalTwilioBargeIn();
           clearPendingTwilioUserSpeechCandidate();
-          if (shouldAskFinalCheckInBeforeEnding(reviewed.text, lastAssistantTranscript)) {
+          const finalCheckInAnswer = twilioFinalCheckInAsked || isAnythingElseCheckInTranscript(lastAssistantTranscript)
+            ? classifyFinalCheckInAnswer(reviewed.text)
+            : "unknown";
+          if (finalCheckInAnswer === "positive") {
+            twilioFinalCheckInAsked = false;
+          }
+          if (shouldAskFinalCheckInBeforeEnding(reviewed.text, lastAssistantTranscript, twilioFinalCheckInAsked)) {
             requestTwilioFinalCheckIn("Caller gave a soft decline before the final anything-else check-in");
-          } else if (canEndCallFromUserTranscript(reviewed.text, lastAssistantTranscript)) {
+          } else if (canEndCallFromUserTranscript(reviewed.text, lastAssistantTranscript, twilioFinalCheckInAsked)) {
+            twilioFinalCheckInAsked = false;
             requestTwilioGracefulEndCall("Caller expressed end-call intent");
           } else {
             respondToAcceptedTwilioUserTurn();
@@ -1392,6 +1396,9 @@ ${startupRetailContext}`;
               text: trimmed,
               timestamp: Date.now(),
             });
+            if (isAnythingElseCheckInTranscript(trimmed)) {
+              twilioFinalCheckInAsked = true;
+            }
             if (isAssistantClosingTranscript(trimmed) && !pendingEndCall && !endingCall) {
               requestTwilioGracefulEndCall("Assistant delivered closing");
             } else {
@@ -1436,7 +1443,7 @@ ${startupRetailContext}`;
               }
               if (
                 !isAssistantClosingTranscript(lastAssistantTranscript) &&
-                !canEndCallFromUserTranscript(lastUserTranscript, lastAssistantTranscript)
+                !canEndCallFromUserTranscript(lastUserTranscript, lastAssistantTranscript, twilioFinalCheckInAsked)
               ) {
                 const rejectedResult = createNeedsCheckInEndCallResult(reason, lastUserTranscript);
                 console.warn(`[VoiceAgent/Twilio] Rejected end-call before final check-in:`, rejectedResult);
@@ -2207,6 +2214,7 @@ ${startupRetailContext}`;
   function startTwilioFinalCheckInResponse(reason: string): void {
     if (!openai || endingCall || pendingEndCall) return;
     pendingTwilioFinalCheckInReason = null;
+    twilioFinalCheckInAsked = true;
     openai.triggerResponse({
       input: [
         {
@@ -2228,6 +2236,7 @@ ${startupRetailContext}`;
 
   function requestTwilioFinalCheckIn(reason: string): void {
     if (!openai || endingCall || pendingEndCall) return;
+    if (twilioFinalCheckInAsked) return;
     clearTwilioIdleFollowUp();
     if (twilioResponseActive) {
       pendingTwilioFinalCheckInReason = reason;
@@ -2376,6 +2385,7 @@ function handleBrowserSession(ws: WebSocket): void {
   let browserTranscriptPreview = "";
   let pendingBrowserClosingReason: string | null = null;
   let pendingBrowserFinalCheckInReason: string | null = null;
+  let browserFinalCheckInAsked = false;
   let browserEndCallFallbackStartedAt: number | null = null;
   let provisionalBrowserBargeInActive = false;
   let provisionalBrowserBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2415,6 +2425,7 @@ function handleBrowserSession(ws: WebSocket): void {
         browserTranscriptPreview = "";
         pendingBrowserClosingReason = null;
         pendingBrowserFinalCheckInReason = null;
+        browserFinalCheckInAsked = false;
         browserEndCallFallbackStartedAt = null;
         provisionalBrowserBargeInActive = false;
         clearProvisionalBrowserBargeInRelease();
@@ -2593,9 +2604,16 @@ ${startupRetailContext}`;
           releaseProvisionalBrowserBargeIn();
           clearPendingBrowserUserSpeechCandidate();
           browserUserSpeechUiActive = false;
-          if (shouldAskFinalCheckInBeforeEnding(reviewed.text, lastAssistantTranscript)) {
+          const finalCheckInAnswer = browserFinalCheckInAsked || isAnythingElseCheckInTranscript(lastAssistantTranscript)
+            ? classifyFinalCheckInAnswer(reviewed.text)
+            : "unknown";
+          if (finalCheckInAnswer === "positive") {
+            browserFinalCheckInAsked = false;
+          }
+          if (shouldAskFinalCheckInBeforeEnding(reviewed.text, lastAssistantTranscript, browserFinalCheckInAsked)) {
             requestBrowserFinalCheckIn("User gave a soft decline before the final anything-else check-in");
-          } else if (canEndCallFromUserTranscript(reviewed.text, lastAssistantTranscript)) {
+          } else if (canEndCallFromUserTranscript(reviewed.text, lastAssistantTranscript, browserFinalCheckInAsked)) {
+            browserFinalCheckInAsked = false;
             requestBrowserGracefulEndCall("User expressed end-call intent");
           } else {
             respondToAcceptedBrowserUserTurn();
@@ -2655,6 +2673,9 @@ ${startupRetailContext}`;
             timestamp: Date.now(),
           });
           sendEvent({ type: "assistantTranscriptDone", text: trimmed });
+          if (isAnythingElseCheckInTranscript(trimmed)) {
+            browserFinalCheckInAsked = true;
+          }
           if (isAssistantClosingTranscript(trimmed) && !pendingEndCall && !endingCall) {
             requestBrowserGracefulEndCall("Assistant delivered closing");
           } else {
@@ -2749,7 +2770,7 @@ ${startupRetailContext}`;
               }
               if (
                 !isAssistantClosingTranscript(lastAssistantTranscript) &&
-                !canEndCallFromUserTranscript(lastUserTranscript, lastAssistantTranscript)
+                !canEndCallFromUserTranscript(lastUserTranscript, lastAssistantTranscript, browserFinalCheckInAsked)
               ) {
                 const rejectedResult = createNeedsCheckInEndCallResult(reason, lastUserTranscript);
                 console.warn(`[VoiceAgent/Browser] Rejected end-call before final check-in:`, rejectedResult);
@@ -3344,6 +3365,7 @@ ${startupRetailContext}`;
   function startBrowserFinalCheckInResponse(reason: string): void {
     if (!openai || endingCall || pendingEndCall) return;
     pendingBrowserFinalCheckInReason = null;
+    browserFinalCheckInAsked = true;
     openai.triggerResponse({
       input: [
         {
@@ -3365,6 +3387,7 @@ ${startupRetailContext}`;
 
   function requestBrowserFinalCheckIn(reason: string): void {
     if (!openai || endingCall || pendingEndCall) return;
+    if (browserFinalCheckInAsked) return;
     clearBrowserIdleFollowUp();
     if (responseActive) {
       pendingBrowserFinalCheckInReason = reason;
