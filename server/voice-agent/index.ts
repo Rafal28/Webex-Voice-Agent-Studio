@@ -627,6 +627,11 @@ function isBriefButValidTranscript(text: string): boolean {
   return /^(yes|yeah|yep|no|nope|ok|okay|sure|thanks|thank you|sorry|sorry what|what|wait|hold on|hang on|one sec|one second|actually|no wait|hello|hi|hey|repeat that|can you repeat|mhm|mmhm|mm hmm|hmm)$/.test(normalized);
 }
 
+function isBriefGreetingTranscript(text: string): boolean {
+  const normalized = normalizeIntentText(text);
+  return /^(hi|hello|hey|hi there|hello there|hey there)$/.test(normalized);
+}
+
 function isLikelyVerificationCodeTranscript(text: string): boolean {
   const digitWords = new Set([
     "zero",
@@ -808,6 +813,9 @@ function shouldSuppressTwilioUserTranscript(
     now - context.lastAssistantDoneAt < TWILIO_ASSISTANT_ECHO_MATCH_MS ||
     now - context.lastAssistantAudioAt < TWILIO_ASSISTANT_ECHO_MATCH_MS ||
     context.twilioResponseActive;
+  if (recentAssistant && isBriefGreetingTranscript(normalized)) {
+    return true;
+  }
   if (
     recentAssistant &&
     context.lastAssistantTranscript &&
@@ -861,8 +869,18 @@ function shouldSuppressBrowserUserTranscript(
     now - context.lastAssistantAudioAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS ||
     now - context.lastBrowserPlaybackEndedAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS;
   const duringAssistantOutput = context.responseActive || context.browserPlaybackActive || justAfterAssistant;
+  const recentAssistant =
+    context.responseActive ||
+    context.browserPlaybackActive ||
+    now - context.lastAssistantDoneAt < BROWSER_ASSISTANT_ECHO_MATCH_MS ||
+    now - context.lastAssistantAudioAt < BROWSER_ASSISTANT_ECHO_MATCH_MS ||
+    now - context.lastBrowserPlaybackEndedAt < BROWSER_ASSISTANT_ECHO_MATCH_MS;
 
   if (isEnglishLanguage(context.language) && hasMostlyNonLatinLetters(normalized)) {
+    return true;
+  }
+
+  if (recentAssistant && isBriefGreetingTranscript(normalized)) {
     return true;
   }
 
@@ -871,11 +889,6 @@ function shouldSuppressBrowserUserTranscript(
     return true;
   }
 
-  const recentAssistant =
-    context.responseActive ||
-    context.browserPlaybackActive ||
-    now - context.lastAssistantDoneAt < BROWSER_ASSISTANT_ECHO_MATCH_MS ||
-    now - context.lastAssistantAudioAt < BROWSER_ASSISTANT_ECHO_MATCH_MS;
   if (
     recentAssistant &&
     context.lastAssistantTranscript &&
