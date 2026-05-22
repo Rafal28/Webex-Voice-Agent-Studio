@@ -21,6 +21,7 @@ import {
   classifyAddOnOfferAnswer,
   classifyFinalCheckInAnswer,
   isAssistantAddOnOfferTranscript,
+  isAssistantProfileConfirmationTranscript,
   isAssistantWaitingForCallerAnswerTranscript,
   isAnythingElseCheckInTranscript,
   isIncompleteUserRequestTranscript,
@@ -45,6 +46,7 @@ const BROWSER_END_CALL_MAX_WAIT_MS = 18000;
 const ACCEPTED_USER_TURN_RESPONSE_TIMEOUT_MS = 3200;
 const FINAL_CHECK_IN_TEXT = "Is there anything else I can help with?";
 const FINAL_CLOSING_TEXT = "Thanks for calling Acme Electronics. Have a good rest of your day.";
+const PROFILE_CONFIRMATION_TEXT = "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?";
 const REALTIME_TRANSCRIPTION_LANGUAGE = "en";
 const REALTIME_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const RETAIL_TRANSCRIPTION_KEYWORDS =
@@ -344,7 +346,7 @@ function buildTwilioCallInstructions(
         ? `Do not offer an optional call-summary text message in this demo. For reservation confirmations, use the WhatsApp confirmation wording after a reservation is created.`
         : `Do not offer SMS or text-message delivery in this demo. For reservation confirmations, use the email confirmation wording after a reservation is created.`;
   const callerIdentityInstructions = returningCallerName
-    ? `The PSTN caller ID produced an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. Do not ask for profile confirmation after a vague, incomplete, or generic browsing request. For generic product/category/price/availability questions, answer normally first. Ask for first-and-last-name confirmation only before using customer-specific context, history, preferences, personalized recommendations, or creating a reservation. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context.`
+    ? `The PSTN caller ID produced an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. Ignore vague or incomplete fragments. After the caller states a complete intent, ask them to confirm their first and last name before continuing. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context. After profile confirmation succeeds, resume the caller's original request without asking them to repeat it.`
     : `The caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
 
   return `Always respond in English unless the caller explicitly asks for another language.
@@ -381,7 +383,7 @@ CRITICAL CALL CONTEXT:
 function buildBrowserCallInstructions(baseInstructions: string, returningCallerName?: string): string {
   const confirmationSpokenRoute = getDemoConfirmationSpokenRoute();
   const browserIdentityInstructions = returningCallerName
-    ? `This browser demo session has an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. Do not ask for profile confirmation after a vague, incomplete, or generic browsing request. For generic product/category/price/availability questions, answer normally first. Ask for first-and-last-name confirmation only before using customer-specific context, history, preferences, personalized recommendations, or creating a reservation. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context.`
+    ? `This browser demo session has an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. Ignore vague or incomplete fragments. After the caller states a complete intent, ask them to confirm their first and last name before continuing. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context. After profile confirmation succeeds, resume the caller's original request without asking them to repeat it.`
     : `The browser caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
 
   return `Always respond in English unless the user explicitly asks for another language.
@@ -599,6 +601,27 @@ function getIdleFollowUpInstruction(lastAssistantTranscript: string): string {
 
 function isWaitingForCallerAnswer(text: string): boolean {
   return isAssistantWaitingForCallerAnswerTranscript(text);
+}
+
+function isCompleteInitialIntentTranscript(text: string): boolean {
+  const normalized = normalizeIntentText(text);
+  if (!normalized) return false;
+  if (isIncompleteUserRequestTranscript(text)) return false;
+  if (isBriefGreetingTranscript(text) || isBriefButValidTranscript(text)) return false;
+  const words = normalized.split(/\s+/).filter(Boolean);
+  return words.length >= 3;
+}
+
+function shouldRequestProfileConfirmation(
+  text: string,
+  options: { candidateAvailable: boolean; confirmationAsked: boolean; confirmed: boolean }
+): boolean {
+  return (
+    options.candidateAvailable &&
+    !options.confirmationAsked &&
+    !options.confirmed &&
+    isCompleteInitialIntentTranscript(text)
+  );
 }
 
 function publicSmsFailureMessage(reservation?: RetailReservationDetails | null): string {
@@ -1202,6 +1225,9 @@ function handleTwilioSession(ws: WebSocket): void {
   let pendingTwilioClosingReason: string | null = null;
   let pendingTwilioFinalCheckInReason: string | null = null;
   let pendingTwilioAddOnCheckInText: string | null = null;
+  let twilioProfileCandidateAvailable = false;
+  let twilioProfileConfirmationAsked = false;
+  let twilioProfileConfirmed = false;
   let twilioFinalCheckInAsked = false;
   let twilioPendingAddOnOffer = false;
   let twilioEndCallFallbackStartedAt: number | null = null;
@@ -1232,6 +1258,9 @@ function handleTwilioSession(ws: WebSocket): void {
         pendingTwilioClosingReason = null;
         pendingTwilioFinalCheckInReason = null;
         pendingTwilioAddOnCheckInText = null;
+        twilioProfileCandidateAvailable = false;
+        twilioProfileConfirmationAsked = false;
+        twilioProfileConfirmed = false;
         twilioFinalCheckInAsked = false;
         twilioPendingAddOnOffer = false;
         twilioEndCallFallbackStartedAt = null;
@@ -1278,6 +1307,7 @@ function handleTwilioSession(ws: WebSocket): void {
 
         startupRetailContext = callerPhone !== "Unknown" ? await runStartupRetailProfileLookup() : "";
         const returningCallerName = startupRetailContext ? "John" : undefined;
+        twilioProfileCandidateAvailable = Boolean(startupRetailContext);
 
         instructions = buildRuntimeInstructions(instructions, agentName);
         instructions = buildTwilioCallInstructions(instructions, callerPhone, canSendCallerSummarySms, returningCallerName);
@@ -1287,8 +1317,8 @@ function handleTwilioSession(ws: WebSocket): void {
 # Unverified Returning Caller Candidate
 
 The PSTN caller ID found a possible returning customer, but identity is not confirmed yet.
-For generic product/category/price/availability questions, answer normally first and do not ask for profile confirmation yet.
-Ask for first-and-last-name confirmation only before using customer-specific context, history, preferences, personalized recommendations, or creating a reservation.
+Ignore vague or incomplete fragments. After the caller states a complete intent, ask them to confirm their first and last name before continuing.
+After profile confirmation succeeds, resume the caller's original request without asking them to repeat it.
 
 ${startupRetailContext}`;
         }
@@ -1418,6 +1448,16 @@ ${startupRetailContext}`;
           });
           releaseProvisionalTwilioBargeIn();
           clearPendingTwilioUserSpeechCandidate();
+          if (
+            shouldRequestProfileConfirmation(reviewed.text, {
+              candidateAvailable: twilioProfileCandidateAvailable,
+              confirmationAsked: twilioProfileConfirmationAsked,
+              confirmed: twilioProfileConfirmed,
+            })
+          ) {
+            requestTwilioProfileConfirmation(reviewed.text);
+            return;
+          }
           const addOnOfferWasPending = twilioPendingAddOnOffer;
           if (addOnOfferWasPending) {
             twilioPendingAddOnOffer = false;
@@ -1493,6 +1533,9 @@ ${startupRetailContext}`;
             });
             if (isAssistantAddOnOfferTranscript(trimmed)) {
               twilioPendingAddOnOffer = true;
+            }
+            if (isAssistantProfileConfirmationTranscript(trimmed)) {
+              twilioProfileConfirmationAsked = true;
             }
             if (isStandaloneFinalCheckInTranscript(trimmed)) {
               twilioFinalCheckInAsked = true;
@@ -1601,6 +1644,10 @@ ${startupRetailContext}`;
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
+            }
+            if (result.success && name === "retail_confirm_profile") {
+              twilioProfileConfirmed = true;
+              twilioProfileConfirmationAsked = true;
             }
             sendTwilioMonitorEvent(monitorAgentId, {
               type: "toolCallCompleted",
@@ -2373,6 +2420,31 @@ ${startupRetailContext}`;
     startTwilioAddOnAnswerCheckInResponse(text);
   }
 
+  function requestTwilioProfileConfirmation(initialIntent: string): void {
+    if (!openai || endingCall || pendingEndCall || twilioProfileConfirmationAsked || twilioProfileConfirmed) return;
+    clearTwilioIdleFollowUp();
+    twilioProfileConfirmationAsked = true;
+    openai.triggerResponse({
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text:
+                `The caller just stated this complete initial intent: "${initialIntent}". ` +
+                `Ask exactly this profile confirmation and no other words: "${PROFILE_CONFIRMATION_TEXT}" ` +
+                "After the caller confirms, resume the initial intent without asking them to repeat it.",
+            },
+          ],
+        },
+      ],
+      output_modalities: ["audio"],
+      instructions: `Say exactly this text in en-US and no other words: "${PROFILE_CONFIRMATION_TEXT}" Do not call any tools.`,
+    });
+  }
+
   function requestTwilioFinalCheckIn(reason: string): void {
     if (!openai || endingCall || pendingEndCall) return;
     if (twilioFinalCheckInAsked) return;
@@ -2534,6 +2606,9 @@ function handleBrowserSession(ws: WebSocket): void {
   let pendingBrowserClosingReason: string | null = null;
   let pendingBrowserFinalCheckInReason: string | null = null;
   let pendingBrowserAddOnCheckInText: string | null = null;
+  let browserProfileCandidateAvailable = false;
+  let browserProfileConfirmationAsked = false;
+  let browserProfileConfirmed = false;
   let browserFinalCheckInAsked = false;
   let browserPendingAddOnOffer = false;
   let browserEndCallFallbackStartedAt: number | null = null;
@@ -2576,6 +2651,9 @@ function handleBrowserSession(ws: WebSocket): void {
         pendingBrowserClosingReason = null;
         pendingBrowserFinalCheckInReason = null;
         pendingBrowserAddOnCheckInText = null;
+        browserProfileCandidateAvailable = false;
+        browserProfileConfirmationAsked = false;
+        browserProfileConfirmed = false;
         browserFinalCheckInAsked = false;
         browserPendingAddOnOffer = false;
         browserEndCallFallbackStartedAt = null;
@@ -2602,6 +2680,7 @@ function handleBrowserSession(ws: WebSocket): void {
 
         startupRetailContext = await runStartupRetailProfileLookup();
         const returningCallerName = startupRetailContext ? "John" : undefined;
+        browserProfileCandidateAvailable = Boolean(startupRetailContext);
 
         instructions = buildRuntimeInstructions(instructions, agentName);
         instructions = buildBrowserCallInstructions(instructions, returningCallerName);
@@ -2611,8 +2690,8 @@ function handleBrowserSession(ws: WebSocket): void {
 # Unverified Browser Demo Caller Candidate
 
 This browser demo call found a possible returning customer, but identity is not confirmed yet.
-For generic product/category/price/availability questions, answer normally first and do not ask for profile confirmation yet.
-Ask for first-and-last-name confirmation only before using customer-specific context, history, preferences, personalized recommendations, or creating a reservation.
+Ignore vague or incomplete fragments. After the caller states a complete intent, ask them to confirm their first and last name before continuing.
+After profile confirmation succeeds, resume the caller's original request without asking them to repeat it.
 
 ${startupRetailContext}`;
         }
@@ -2767,6 +2846,16 @@ ${startupRetailContext}`;
           releaseProvisionalBrowserBargeIn();
           clearPendingBrowserUserSpeechCandidate();
           browserUserSpeechUiActive = false;
+          if (
+            shouldRequestProfileConfirmation(reviewed.text, {
+              candidateAvailable: browserProfileCandidateAvailable,
+              confirmationAsked: browserProfileConfirmationAsked,
+              confirmed: browserProfileConfirmed,
+            })
+          ) {
+            requestBrowserProfileConfirmation(reviewed.text);
+            return;
+          }
           const addOnOfferWasPending = browserPendingAddOnOffer;
           if (addOnOfferWasPending) {
             browserPendingAddOnOffer = false;
@@ -2848,6 +2937,9 @@ ${startupRetailContext}`;
           sendEvent({ type: "assistantTranscriptDone", text: trimmed });
           if (isAssistantAddOnOfferTranscript(trimmed)) {
             browserPendingAddOnOffer = true;
+          }
+          if (isAssistantProfileConfirmationTranscript(trimmed)) {
+            browserProfileConfirmationAsked = true;
           }
           if (isStandaloneFinalCheckInTranscript(trimmed)) {
             browserFinalCheckInAsked = true;
@@ -3009,6 +3101,10 @@ ${startupRetailContext}`;
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
+            }
+            if (result.success && name === "retail_confirm_profile") {
+              browserProfileConfirmed = true;
+              browserProfileConfirmationAsked = true;
             }
             sendEvent({
               type: "toolCallCompleted",
@@ -3600,6 +3696,31 @@ ${startupRetailContext}`;
       return;
     }
     startBrowserAddOnAnswerCheckInResponse(text);
+  }
+
+  function requestBrowserProfileConfirmation(initialIntent: string): void {
+    if (!openai || endingCall || pendingEndCall || browserProfileConfirmationAsked || browserProfileConfirmed) return;
+    clearBrowserIdleFollowUp();
+    browserProfileConfirmationAsked = true;
+    openai.triggerResponse({
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text:
+                `The user just stated this complete initial intent: "${initialIntent}". ` +
+                `Ask exactly this profile confirmation and no other words: "${PROFILE_CONFIRMATION_TEXT}" ` +
+                "After the user confirms, resume the initial intent without asking them to repeat it.",
+            },
+          ],
+        },
+      ],
+      output_modalities: ["audio"],
+      instructions: `Say exactly this text in en-US and no other words: "${PROFILE_CONFIRMATION_TEXT}" Do not call any tools.`,
+    });
   }
 
   function requestBrowserFinalCheckIn(reason: string): void {

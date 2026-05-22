@@ -79,8 +79,16 @@ export function isAssistantWaitingForCallerAnswerTranscript(text: string): boole
   const normalized = normalizeAnswerText(text);
   return (
     raw.includes("?") ||
-    /\b(would you like|would you prefer|if youd like|if you would like|what time|what day|what date|when would|which store|which one|does that work|can you confirm|could you confirm|let me know|tell me what|tell me when)\b/.test(normalized) ||
+    /\b(would you like|would you prefer|if youd like|if you would like|what time|what day|what date|when would|which store|which one|does that work|can you confirm|could you confirm|please confirm|confirm your|let me know|tell me what|tell me when)\b/.test(normalized) ||
     /\b(i can|i could|i can also|i could also)\s+(check|look up|confirm)\b.*\b(availability|preferred pickup store|pickup store|store|next)\b/.test(normalized)
+  );
+}
+
+export function isAssistantProfileConfirmationTranscript(text: string): boolean {
+  const normalized = normalizeAnswerText(text);
+  return (
+    /\b(profile|phone number|caller id)\b.*\b(confirm|verify)\b.*\b(first and last name|name|last name)\b/.test(normalized) ||
+    /\b(confirm|verify|please confirm)\b.*\b(first and last name|your name|last name)\b/.test(normalized)
   );
 }
 
@@ -89,8 +97,8 @@ export function isIncompleteUserRequestTranscript(text: string): boolean {
   if (!normalized) return false;
   const withoutGreeting = normalized.replace(/^(hi|hello|hey|hi there|hello there|hey there)\s+/, "");
   return (
-    /^(id like to|i would like to|i want to|i need to|im looking to|i am looking to|im calling to|i am calling to|i was calling to|im calling about|i am calling about|i was calling about|i want|i need|im looking for|i am looking for)$/.test(withoutGreeting) ||
-    /\b(id like to|i would like to|i want to|i need to|im looking to|i am looking to|im calling to|i am calling to|i was calling to|im calling about|i am calling about|i was calling about)$/.test(withoutGreeting)
+    /^(i was|id like to|i would like to|i want to|i need to|im looking to|i am looking to|im calling to|i am calling to|i was trying to|i was calling to|im calling about|i am calling about|i was calling about|i want|i need|im looking for|i am looking for)$/.test(withoutGreeting) ||
+    /\b(id like to|i would like to|i want to|i need to|im looking to|i am looking to|im calling to|i am calling to|i was trying to|i was calling to|im calling about|i am calling about|i was calling about)$/.test(withoutGreeting)
   );
 }
 

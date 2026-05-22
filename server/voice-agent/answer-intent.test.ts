@@ -3,6 +3,7 @@ import {
   classifyAddOnOfferAnswer,
   classifyFinalCheckInAnswer,
   isAssistantAddOnOfferTranscript,
+  isAssistantProfileConfirmationTranscript,
   isAssistantWaitingForCallerAnswerTranscript,
   isCombinedAddOnAndFinalCheckInTranscript,
   isIncompleteUserRequestTranscript,
@@ -76,10 +77,17 @@ assert.equal(
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can check availability at your preferred pickup store next."), true);
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can have it ready for pickup tomorrow at 2 PM. Would that work?"), true);
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("The iPad mini is available in Silver."), false);
+assert.equal(isAssistantWaitingForCallerAnswerTranscript("Please confirm your first and last name."), true);
+assert.equal(
+  isAssistantProfileConfirmationTranscript("Before I place the reservation, I found a profile from your phone number. Please confirm your first and last name."),
+  true
+);
 
 assert.equal(isIncompleteUserRequestTranscript("Hello, I'd like to"), true);
 assert.equal(isIncompleteUserRequestTranscript("I'd like to"), true);
+assert.equal(isIncompleteUserRequestTranscript("I was."), true);
 assert.equal(isIncompleteUserRequestTranscript("I was calling about"), true);
+assert.equal(isIncompleteUserRequestTranscript("I was trying to"), true);
 assert.equal(isIncompleteUserRequestTranscript("Hi, I was calling about a few tablet options."), false);
 assert.equal(isIncompleteUserRequestTranscript("I'd like to buy an iPad."), false);
 
