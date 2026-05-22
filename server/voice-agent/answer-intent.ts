@@ -34,8 +34,12 @@ function hasAdditionalHelpRequest(text: string): boolean {
     /^(do you have|is there|are there|what about|how about)\b/.test(text) ||
     /\b(one more thing|another thing|something else|one question|quick question|another question|i have a question|i have another question)\b/.test(text) ||
     /\b(also|actually)\b.*\b(can|could|would|need|want|looking|check|find|show|reserve|add|change|send)\b/.test(text) ||
-    /^(no|nope|nah)\s+(but\s+|actually\s+)?((can|could|would|will)\s+you|i\s+(need|want|would like|have)|we\s+(need|want|would like|have))\b/.test(text)
+    /^(no|nope|nah)\s+(but\s+|actually\s+|i think\s+|i guess\s+|maybe\s+)?((can|could|would|will)\s+you|i\s+(still\s+)?(need|want|would like|have)|we\s+(still\s+)?(need|want|would like|have))\b/.test(text)
   );
+}
+
+function startsWithNegativeAnswer(text: string): boolean {
+  return /^(no|nope|nah|not really|negative)\b/.test(text);
 }
 
 function isNegativeNoMoreHelpAnswer(text: string): boolean {
@@ -64,6 +68,9 @@ export function classifyFinalCheckInAnswer(text: string): FinalCheckInAnswerInte
   }
   if (hasAdditionalHelpRequest(stripped) || hasAdditionalHelpRequest(normalized)) {
     return "positive";
+  }
+  if (startsWithNegativeAnswer(stripped) || startsWithNegativeAnswer(normalized)) {
+    return "negative";
   }
   return "unknown";
 }

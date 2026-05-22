@@ -12,6 +12,9 @@ const negativeAnswers = [
   "thank you, that's all",
   "yeah no I'm good",
   "not right now",
+  "No, I think that's possible.",
+  "No, I think we're good.",
+  "No, I'll pass.",
 ];
 
 const positiveAnswers = [
@@ -24,6 +27,9 @@ const positiveAnswers = [
   "one more thing",
   "What about a keyboard?",
   "also, could you check Palo Alto?",
+  "No, I think I need the case too.",
+  "No, but can you check another pickup time?",
+  "No, I still need help with the keyboard.",
 ];
 
 for (const answer of negativeAnswers) {

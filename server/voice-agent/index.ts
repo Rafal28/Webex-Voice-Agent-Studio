@@ -2297,6 +2297,15 @@ ${startupRetailContext}`;
     if (!alreadySaidClosing) {
       if (twilioResponseActive) {
         pendingTwilioClosingReason = reason;
+        suppressAssistantOutput = true;
+        clearTwilioAssistantPlayback();
+        openai?.cancelResponse();
+        twilioResponseActive = false;
+        setTimeout(() => {
+          if (pendingTwilioClosingReason !== reason || !pendingEndCall || endingCall) return;
+          suppressAssistantOutput = false;
+          startTwilioClosingResponse(reason);
+        }, 700);
       } else {
         startTwilioClosingResponse(reason);
       }
@@ -3446,6 +3455,15 @@ ${startupRetailContext}`;
     if (!alreadySaidClosing) {
       if (responseActive) {
         pendingBrowserClosingReason = reason;
+        suppressAssistantOutput = true;
+        clearBrowserAssistantPlayback();
+        openai?.cancelResponse();
+        responseActive = false;
+        setTimeout(() => {
+          if (pendingBrowserClosingReason !== reason || !pendingEndCall || endingCall) return;
+          suppressAssistantOutput = false;
+          startBrowserClosingResponse(reason);
+        }, 700);
       } else {
         startBrowserClosingResponse(reason);
       }
