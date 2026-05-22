@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
 import { mapRealtimeVoice, resolveRealtimeVoice } from "./voice";
 
-assert.equal(mapRealtimeVoice("nova"), "shimmer");
-assert.equal(mapRealtimeVoice("onyx"), "echo");
-assert.equal(mapRealtimeVoice("fable"), "ash");
-assert.equal(mapRealtimeVoice("verse"), "verse");
-assert.equal(mapRealtimeVoice(" aura-luna-en "), "shimmer");
-assert.equal(mapRealtimeVoice("aura-athena-en"), "shimmer");
-assert.equal(mapRealtimeVoice("unknown-legacy-voice"), "verse");
+assert.equal(mapRealtimeVoice("nova"), "marin");
+assert.equal(mapRealtimeVoice("onyx"), "marin");
+assert.equal(mapRealtimeVoice("fable"), "marin");
+assert.equal(mapRealtimeVoice("verse"), "marin");
+assert.equal(mapRealtimeVoice("marin"), "marin");
+assert.equal(mapRealtimeVoice("cedar"), "cedar");
+assert.equal(mapRealtimeVoice(" aura-luna-en "), "marin");
+assert.equal(mapRealtimeVoice("aura-athena-en"), "marin");
+assert.equal(mapRealtimeVoice("unknown-legacy-voice"), "marin");
 
-assert.equal(resolveRealtimeVoice("nova", "female"), "shimmer");
-assert.equal(resolveRealtimeVoice("verse", "female"), "shimmer");
-assert.equal(resolveRealtimeVoice("verse", "male"), "echo");
-assert.equal(resolveRealtimeVoice("verse", "neutral"), "verse");
-assert.equal(resolveRealtimeVoice("unknown-legacy-voice", "female"), "shimmer");
-assert.equal(resolveRealtimeVoice("shimmer", "male"), "shimmer");
+assert.equal(resolveRealtimeVoice("nova", "female"), "marin");
+assert.equal(resolveRealtimeVoice("verse", "female"), "marin");
+assert.equal(resolveRealtimeVoice("verse", "male"), "cedar");
+assert.equal(resolveRealtimeVoice("verse", "neutral"), "marin");
+assert.equal(resolveRealtimeVoice("unknown-legacy-voice", "female"), "marin");
+assert.equal(resolveRealtimeVoice("alloy", "female"), "marin");
+assert.equal(resolveRealtimeVoice("shimmer", "male"), "cedar");
+assert.equal(resolveRealtimeVoice("marin", "male"), "marin");

@@ -21,8 +21,8 @@ const FALLBACK_LLMS = [
 ];
 
 const FALLBACK_VOICES = [
-  { id: "alloy", name: "Alloy", gender: "Neutral", style: "Balanced" },
-  { id: "verse", name: "Verse", gender: "Neutral", style: "Adaptive" },
+  { id: "marin", name: "Marin", gender: "Neutral", style: "Best quality" },
+  { id: "cedar", name: "Cedar", gender: "Neutral", style: "Best quality" },
 ];
 
 const VOICE_PREVIEW_TEXT = "Hello! I'm your voice agent assistant. Let me help you with your tasks.";
@@ -44,7 +44,7 @@ const TURNKEY_TEMPLATES = [
     config: {
       agentName: "Tech Advisor",
       llmModel: "gpt-4",
-      voiceModel: "onyx",
+      voiceModel: "marin",
       language: "en-US",
       gender: "neutral",
       systemPrompt: `# Personality
@@ -80,7 +80,7 @@ You are patient, thorough, and never condescending.
     config: {
       agentName: "Support Agent",
       llmModel: "gpt-4",
-      voiceModel: "nova",
+      voiceModel: "marin",
       language: "en-US",
       gender: "female",
       systemPrompt: `# Personality
@@ -117,7 +117,7 @@ You are professional yet warm, and you take ownership of problems.
     config: {
       agentName: "ServiceNow Assistant",
       llmModel: "gpt-4",
-      voiceModel: "alloy",
+      voiceModel: "marin",
       language: "en-US",
       gender: "neutral",
       systemPrompt: `# Personality
@@ -156,7 +156,7 @@ You help users create, track, and resolve IT issues quickly.
     config: {
       agentName: "PagerDuty Assistant",
       llmModel: "gpt-4",
-      voiceModel: "echo",
+      voiceModel: "cedar",
       language: "en-US",
       gender: "male",
       systemPrompt: `# Personality
@@ -196,7 +196,7 @@ You help coordinate on-call schedules and ensure the right people are alerted.
     config: {
       agentName: "Personal OS",
       llmModel: "gpt-4",
-      voiceModel: "nova",
+      voiceModel: "marin",
       language: "en-US",
       gender: "female",
       systemPrompt: `# Personality
@@ -252,7 +252,7 @@ Remember Your Preferences: I adapt to your communication style over time.
     config: {
       agentName: "Daily Prep Assistant",
       llmModel: "gpt-4",
-      voiceModel: "nova",
+      voiceModel: "marin",
       language: "en-US",
       gender: "female",
       systemPrompt: `# Personality
@@ -304,7 +304,7 @@ When asked to prep for the day, you will:
     config: {
       agentName: "Banking Assistant",
       llmModel: "gpt-4",
-      voiceModel: "nova",
+      voiceModel: "marin",
       language: "en-US",
       gender: "female",
       systemPrompt: `# Personality
@@ -367,7 +367,7 @@ For other requests: assist normally.
     config: {
       agentName: "Store Assistant",
       llmModel: "gpt-4",
-      voiceModel: "nova",
+      voiceModel: "marin",
       language: "en-US",
       gender: "female",
       systemPrompt: `# Personality

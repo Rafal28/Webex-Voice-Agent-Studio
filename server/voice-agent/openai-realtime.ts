@@ -93,7 +93,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
         },
         output: {
           format: getRealtimeAudioFormat(this.config.outputAudioFormat),
-          voice: this.config.voice || "verse",
+          voice: this.config.voice || "marin",
         },
       },
       instructions: this.config.instructions,

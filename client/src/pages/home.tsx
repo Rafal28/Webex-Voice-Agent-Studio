@@ -20,8 +20,8 @@ const FALLBACK_LLM_OPTIONS = [
 ];
 
 const FALLBACK_VOICE_OPTIONS = [
-  { value: "alloy", label: "Alloy" },
-  { value: "verse", label: "Verse" },
+  { value: "marin", label: "Marin" },
+  { value: "cedar", label: "Cedar" },
 ];
 
 const LANGUAGE_OPTIONS = [

@@ -163,6 +163,10 @@ function resolveOpenAITtsModel(model: string, voice: string): string {
   return model;
 }
 
+function resolveOpenAITtsVoice(voice: string): string {
+  return voice.trim().toLowerCase() === "cedar" ? "cedar" : "marin";
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
 
   // ── Provider config (dynamic LLM + voice options for frontend) ────────────
@@ -195,17 +199,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           { id: "aura-zeus-en", name: "Zeus", gender: "Male", style: "Commanding" },
         ]
       : [
-          { id: "alloy", name: "Alloy", gender: "Neutral", style: "Balanced" },
-          { id: "ash", name: "Ash", gender: "Neutral", style: "Warm" },
-          { id: "ballad", name: "Ballad", gender: "Neutral", style: "Expressive" },
-          { id: "coral", name: "Coral", gender: "Neutral", style: "Bright" },
-          { id: "echo", name: "Echo", gender: "Male", style: "Deep" },
-          { id: "fable", name: "Fable", gender: "Male", style: "British" },
-          { id: "onyx", name: "Onyx", gender: "Male", style: "Authoritative" },
-          { id: "nova", name: "Nova", gender: "Female", style: "Energetic" },
-          { id: "sage", name: "Sage", gender: "Neutral", style: "Calm" },
-          { id: "shimmer", name: "Shimmer", gender: "Female", style: "Soft" },
-          { id: "verse", name: "Verse", gender: "Neutral", style: "Adaptive" },
+          { id: "marin", name: "Marin", gender: "Neutral", style: "Best quality" },
+          { id: "cedar", name: "Cedar", gender: "Neutral", style: "Best quality" },
         ];
 
     res.json({
@@ -755,10 +750,11 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
           });
         }
 
-        const model = resolveOpenAITtsModel(data.model, data.voice);
+        const voice = resolveOpenAITtsVoice(data.voice);
+        const model = resolveOpenAITtsModel(data.model, voice);
         const mp3 = await openai.audio.speech.create({
           model,
-          voice: data.voice,
+          voice,
           input: data.text,
         });
 

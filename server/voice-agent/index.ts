@@ -1004,7 +1004,7 @@ function handleTwilioSession(ws: WebSocket): void {
         activeCallSid = typeof callSid === "string" ? callSid : null;
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
-        let voice = "verse";
+        let voice = "marin";
         let language = "en-US";
         agentName = "Store Assistant";
         lastAssistantTranscript = "";
@@ -2091,7 +2091,7 @@ function handleBrowserSession(ws: WebSocket): void {
       if (msg.type === "start") {
         const { agentId, config } = msg;
         let instructions = config?.systemPrompt || "You are a helpful voice assistant. Keep responses concise and conversational.";
-        let voice = resolveRealtimeVoice(config?.voice || "verse", config?.gender);
+        let voice = resolveRealtimeVoice(config?.voice || "marin", config?.gender);
         language = config?.language || language;
         agentName = "Store Assistant";
         lastAssistantTranscript = "";
