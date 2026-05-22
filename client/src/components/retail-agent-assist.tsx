@@ -958,9 +958,11 @@ function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent):
 
   if (event.toolName === "voice_end_call") {
     return {
-      header: "Wrapping up",
-      summary: "The assistant is finishing this interaction.",
-      lines: [{ id: "wrap-call", text: "Call flow is complete.", status }],
+      header: running ? "Closing call" : "Closing complete",
+      summary: running
+        ? "The assistant is sending the final closing before hangup."
+        : "The assistant has completed the closing step.",
+      lines: [{ id: "wrap-call", text: "Brief closing and hangup are queued.", status }],
     };
   }
 

@@ -155,6 +155,14 @@ function normalizeTranscript(text: string): string {
   return text.trim().toLowerCase().replace(/[.!?,\s]+$/g, "");
 }
 
+function normalizeIntentText(text: string): string {
+  return normalizeTranscript(text)
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
 function isTwilioSmsConfigured(): boolean {
   return Boolean(
     process.env.TWILIO_ACCOUNT_SID &&
@@ -414,13 +422,15 @@ function getRetailToolEventType(
 }
 
 function isEndCallIntent(text: string): boolean {
-  const normalized = normalizeTranscript(text)
-    .replace(/['’]/g, "")
-    .replace(/\s+/g, " ");
+  const normalized = normalizeIntentText(text);
   if (!normalized) return false;
   if (/\b(dont|do not|not)\s+(end|hang up|disconnect|stop)\b/.test(normalized)) return false;
   if (/^(bye|goodbye|bye bye|thanks bye|thank you bye|ok bye|okay bye)$/.test(normalized)) return true;
   if (/^(thats all|that is all|im done|i am done|were done|we are done|no thats all|no that is all)$/.test(normalized)) return true;
+  if (/^(thats|that is|thatll be|that will be) all( i (had|have|needed|need))?$/.test(normalized)) return true;
+  if (/^(no )?(im|i am) (good|all set|fine|ok|okay)( thank(s| you))?( thats all( i (had|have))?)?$/.test(normalized)) return true;
+  if (/^no (thank(s| you) )?(im|i am) (good|all set|fine|ok|okay)( thank(s| you))?$/.test(normalized)) return true;
+  if (/^no (thank(s| you) )?(thats|that is) all( i (had|have|needed|need))?$/.test(normalized)) return true;
   if (/^(end|stop|disconnect|hang up)( the)? (call|conversation)$/.test(normalized)) return true;
   if (/^(please )?(end|stop|disconnect|hang up)( this| the)? (call|conversation)( please)?$/.test(normalized)) return true;
   if (/^(you can|you may|go ahead and) (hang up|end the call|disconnect)$/.test(normalized)) return true;
@@ -973,6 +983,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
   let pendingTwilioUserSpeechStartedAt: number | null = null;
+  let pendingTwilioClosingReason: string | null = null;
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -995,6 +1006,7 @@ function handleTwilioSession(ws: WebSocket): void {
         lastAssistantTranscript = "";
         lastUserTranscript = "";
         suppressAssistantOutput = false;
+        pendingTwilioClosingReason = null;
         callerPhone = typeof params.callerPhone === "string" && params.callerPhone.trim()
           ? params.callerPhone.trim()
           : "Unknown";
@@ -1066,7 +1078,7 @@ ${startupRetailContext}`;
           turnDetection: {
             type: "semantic_vad",
             create_response: false,
-            eagerness: "medium",
+            eagerness: "high",
             interrupt_response: false,
           },
           tools,
@@ -1353,12 +1365,20 @@ ${startupRetailContext}`;
         openai.on("responseDone", () => {
           twilioResponseActive = false;
           suppressAssistantOutput = false;
+          if (pendingTwilioClosingReason && pendingEndCall && !endingCall) {
+            startTwilioClosingResponse(pendingTwilioClosingReason);
+            return;
+          }
           maybeCompleteTwilioPendingEndCall("End-call final audio completed");
         });
 
         openai.on("responseCancelled", () => {
           twilioResponseActive = false;
           suppressAssistantOutput = false;
+          if (pendingTwilioClosingReason && pendingEndCall && !endingCall) {
+            startTwilioClosingResponse(pendingTwilioClosingReason);
+            return;
+          }
           maybeCompleteTwilioPendingEndCall("End-call response cancelled");
         });
 
@@ -1846,6 +1866,28 @@ ${startupRetailContext}`;
     }, POST_RESPONSE_IDLE_FOLLOWUP_MS);
   }
 
+  function startTwilioClosingResponse(reason: string): void {
+    if (!openai || endingCall) return;
+    pendingTwilioClosingReason = null;
+    openai.triggerResponse({
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: getClosingInstruction(reason),
+            },
+          ],
+        },
+      ],
+      output_modalities: ["audio"],
+      instructions:
+        "Say exactly one brief closing in en-US, then stop: \"Thanks for calling Acme Electronics. Have a good rest of your day.\" Do not ask another question.",
+    });
+  }
+
   function requestTwilioGracefulEndCall(reason: string, source: "tool" | "intent" = "intent"): void {
     if (pendingEndCall || endingCall) return;
     clearTwilioIdleFollowUp();
@@ -1868,30 +1910,20 @@ ${startupRetailContext}`;
     });
     const alreadySaidClosing = /thanks for (calling|your time)|good (rest|day)|have a (great|good|wonderful|nice)|goodbye|take care|bye now/i.test(lastAssistantTranscript);
     if (!alreadySaidClosing) {
-      openai?.triggerResponse({
-        input: [
-          {
-            type: "message",
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: getClosingInstruction(reason),
-              },
-            ],
-          },
-        ],
-        output_modalities: ["audio"],
-        instructions:
-          "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
-      });
+      if (twilioResponseActive) {
+        pendingTwilioClosingReason = reason;
+      } else {
+        startTwilioClosingResponse(reason);
+      }
     }
     scheduleTwilioEndCall(reason, TWILIO_END_CALL_FALLBACK_MS);
   }
 
   function maybeCompleteTwilioPendingEndCall(reason: string): void {
+    if (pendingTwilioClosingReason) return;
     if (!pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
     setTimeout(() => {
+      if (pendingTwilioClosingReason) return;
       if (!pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
       completeTwilioEndCall(reason).catch((error) => {
         console.error("[VoiceAgent/Twilio] End-call completion failed:", error);
