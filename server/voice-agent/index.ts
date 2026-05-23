@@ -7,6 +7,7 @@ import { OpenAIRealtimeClient, type RealtimeSpeechEvent } from "./openai-realtim
 import { resolveRealtimeVoice } from "./voice";
 import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
+import { isSmsConfigured } from "../tools/twilio";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { buildConfiguredWebexMessageArgs } from "./webex-routing";
@@ -128,7 +129,7 @@ const SMS_SUMMARY_MAX_CHARS = 1200;
 const STORE_MANAGER_WEBEX_TEMPLATE = "store_manager_webex_message";
 
 function canUseDemoSms(): boolean {
-  return DEMO_ENABLE_SMS && isTwilioSmsConfigured();
+  return DEMO_ENABLE_SMS && isSmsConfigured();
 }
 
 function canUseDemoWhatsApp(): boolean {
@@ -182,14 +183,6 @@ function normalizeIntentText(text: string): string {
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
-}
-
-function isTwilioSmsConfigured(): boolean {
-  return Boolean(
-    process.env.TWILIO_ACCOUNT_SID &&
-    process.env.TWILIO_AUTH_TOKEN &&
-    (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID)
-  );
 }
 
 function isTwilioWhatsAppConfigured(): boolean {
@@ -1969,7 +1962,11 @@ ${startupRetailContext}`;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
     );
-    const rawResult = await executeTool("twilio_sms", { to, body });
+    const rawResult = await executeTool("twilio_sms", {
+      to,
+      body,
+      reservationId: latestReservation.reservationId,
+    });
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
@@ -2150,7 +2147,11 @@ ${startupRetailContext}`;
     }
 
     const body = truncateForSms(`Summary of our call: ${summary}`);
-    const rawResult = await executeTool("twilio_sms", { to: callerPhone, body });
+    const rawResult = await executeTool("twilio_sms", {
+      to: callerPhone,
+      body,
+      correlationId: callSid || "caller-summary",
+    });
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     if (result.success) {
       sendTwilioMonitorEvent(agentId, {
@@ -3426,7 +3427,11 @@ ${startupRetailContext}`;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
     );
-    const rawResult = await executeTool("twilio_sms", { to, body });
+    const rawResult = await executeTool("twilio_sms", {
+      to,
+      body,
+      reservationId: latestReservation.reservationId,
+    });
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     sendEvent({
       type: "toolCallCompleted",

@@ -147,6 +147,9 @@ WEBEX_SPACE_ID=...
 TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
 TWILIO_PHONE_NUMBER=...
+SMS_PROVIDER=...           # twilio or webex_connect for outbound SMS confirmations
+WEBEX_CONNECT_SMS_KEY=...
+WEBEX_CONNECT_SMS_FROM=...
 APP_BASE_URL=...           # public URL for Twilio webhooks (voice/SMS)
 ANAM_API_KEY=...
 ```
@@ -192,6 +195,12 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `APP_BASE_URL` | For Voice | Public URL for Twilio webhooks |
 | `DEMO_ENABLE_SMS` | Optional | Defaults to `false`; keep disabled unless the environment is approved for SMS compliance |
 | `DEMO_CONFIRMATION_CHANNEL` | Optional | `sms`, `email`, or `whatsapp`; defaults to SMS. Spoken demo wording follows the selected channel |
+| `SMS_PROVIDER` | Optional | `twilio` or `webex_connect`; defaults to Twilio when Twilio SMS credentials are configured |
+| `WEBEX_CONNECT_SMS_KEY` | For Webex Connect SMS | API key used as the Webex Connect `key` header |
+| `WEBEX_CONNECT_SMS_FROM` | For Webex Connect SMS | Long code sender, for example `16693323901` |
+| `WEBEX_CONNECT_SMS_API_URL` | Optional | Defaults to `https://api.us.webexconnect.io/v2/messages` |
+| `WEBEX_CONNECT_SMS_NOTIFY_URL` | Optional | Webex Connect delivery callback URL |
+| `WEBEX_CONNECT_SMS_CALLBACK_DATA` | Optional | Callback metadata included in Webex Connect requests |
 | `TWILIO_WHATSAPP_FROM` | For WhatsApp confirmations | Twilio WhatsApp sender, for example the sandbox number `whatsapp:+14155238886` |
 | `TWILIO_WHATSAPP_SANDBOX_JOIN_CODE` | For WhatsApp opt-in | Sandbox join code shown on `/whatsapp-opt-in` |
 | `CUSTOMER_CONFIRMATION_EMAIL` | For email confirmations | Optional default customer email used when `DEMO_CONFIRMATION_CHANNEL=email`; `/demo-setup` can set this at runtime |
@@ -351,7 +360,7 @@ Post-call store-manager summaries use `WEBEX_SPACE_ID`. Customer reservation con
 Customer-facing reservation confirmations are separate from the manager-facing Webex summary:
 
 - Spoken confirmation wording says text message by default. It says email when `DEMO_CONFIRMATION_CHANNEL=email` and WhatsApp when `DEMO_CONFIRMATION_CHANNEL=whatsapp`.
-- Actual SMS sends only when `DEMO_CONFIRMATION_CHANNEL=sms`, `DEMO_ENABLE_SMS=true`, and Twilio SMS credentials are configured.
+- Actual SMS sends only when `DEMO_CONFIRMATION_CHANNEL=sms`, `DEMO_ENABLE_SMS=true`, and a supported SMS provider is configured. Twilio SMS uses `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and either `TWILIO_PHONE_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID`; Webex Connect SMS uses `SMS_PROVIDER=webex_connect`, `WEBEX_CONNECT_SMS_KEY`, and `WEBEX_CONNECT_SMS_FROM`.
 - Actual email sends only when `DEMO_CONFIRMATION_CHANNEL=email`, `CUSTOMER_CONFIRMATION_EMAIL` is set or configured from `/demo-setup`, and `DEMO_CONFIRMATION_EMAIL_WEBHOOK_URL` is set.
 - Actual WhatsApp sends only when `DEMO_CONFIRMATION_CHANNEL=whatsapp`, `TWILIO_WHATSAPP_FROM` is set, and the recipient has joined the Twilio WhatsApp Sandbox.
 

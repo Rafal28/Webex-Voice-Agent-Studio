@@ -409,6 +409,7 @@ export interface TwilioStatus {
   configured: boolean;
   voiceConfigured: boolean;
   smsConfigured: boolean;
+  smsProvider?: "twilio" | "webex_connect";
   baseUrl: string | null;
   phoneNumber: string | null;
   webhooks: {

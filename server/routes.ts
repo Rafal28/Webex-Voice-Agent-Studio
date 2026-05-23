@@ -11,6 +11,7 @@ import * as os from "os";
 import multer from "multer";
 import { createClient } from "@deepgram/sdk";
 import { chatTools, executeTool, realtimeTools } from "./tools";
+import { getSmsProvider, isSmsConfigured } from "./tools/twilio";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { getWebexProfile, updateWebexProfile } from "./webex-profile";
@@ -1716,11 +1717,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   // ── Twilio status endpoint ──────────────────────────────────────────────────
   app.get("/api/twilio/status", (req, res) => {
-    const smsConfigured = !!(
-      process.env.TWILIO_ACCOUNT_SID &&
-      process.env.TWILIO_AUTH_TOKEN &&
-      (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID)
-    );
+    const smsConfigured = isSmsConfigured();
     const baseUrl = getPublicBaseUrl(req);
     const phoneNumber = process.env.TWILIO_PHONE_NUMBER || null;
     const voiceConfigured = Boolean(baseUrl);
@@ -1728,6 +1725,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       configured: voiceConfigured && !!phoneNumber,
       voiceConfigured,
       smsConfigured,
+      smsProvider: getSmsProvider(),
       baseUrl,
       phoneNumber,
       webhooks: baseUrl ? {
