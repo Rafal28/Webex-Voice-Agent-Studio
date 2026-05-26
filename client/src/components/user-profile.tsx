@@ -64,18 +64,18 @@ export function UserProfile() {
       <Button
         variant="ghost"
         size="icon"
-        className="fixed right-4 top-4 z-[60] h-11 w-11 rounded-full border border-white/15 bg-background/70 p-0 shadow-lg shadow-black/20 backdrop-blur-md hover:bg-accent"
+        className="fixed right-4 top-4 z-[60] h-11 w-11 rounded-full border border-white/15 bg-background/70 p-0 shadow-lg shadow-black/20 backdrop-blur-md hover:bg-white/[0.07]"
         onClick={() => setOpen(true)}
         aria-label="Open user profile"
         data-testid="button-user-profile"
       >
-        <Avatar className="h-9 w-9 border border-primary/60">
-          <AvatarFallback className="bg-gradient-to-br from-primary to-purple-400 text-primary-foreground">
+        <Avatar className="h-9 w-9 border border-white/15">
+          <AvatarFallback className="bg-white/[0.06] text-foreground">
             <UserRound className="h-5 w-5" />
           </AvatarFallback>
         </Avatar>
         {profile?.hasBearerToken && profile.webexSpaceId ? (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white">
+          <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white text-black">
             <Check className="h-3 w-3" />
           </span>
         ) : null}

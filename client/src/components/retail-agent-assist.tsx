@@ -548,7 +548,7 @@ export function RetailProgressTimeline({ className, state }: { className?: strin
   if (!hasThinkingActivity(state)) return null;
 
   return (
-    <div className={cn("space-y-3", className)}>
+    <div className={cn("retail-progress-timeline space-y-3", className)}>
       {sections.map((section) => (
         <ThinkingAccordionBox
           key={section.id}
@@ -575,22 +575,22 @@ function ThinkingAccordionBox({
       open={isOpen}
       onOpenChange={onOpenChange}
       className={cn(
-        "overflow-hidden rounded-xl border bg-card/50",
+        "retail-thinking-box overflow-hidden rounded-xl border bg-card/50",
         isOpen ? "border-white/15" : "border-white/10"
       )}
     >
-      <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 p-3 text-sm transition-colors hover:bg-white/[0.02]">
+      <CollapsibleTrigger className="retail-thinking-trigger flex w-full items-center justify-between gap-3 p-3 text-sm transition-colors hover:bg-white/[0.02]">
         <div className="flex min-w-0 items-center gap-3 text-left">
           <span
             className={cn(
-              "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
+              "retail-thinking-icon relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
               getThinkingIconToneClassName(section.tone, section.active)
             )}
           >
             {section.active && <span className={cn("absolute inset-0 rounded-full animate-ping", getThinkingPingClassName(section.tone))} />}
             <span className="relative">{section.icon}</span>
           </span>
-          <span className={cn("min-w-0 truncate font-medium", section.active ? "text-primary" : "text-foreground")}>
+          <span className={cn("retail-thinking-title min-w-0 truncate font-medium", section.active ? "text-primary" : "text-foreground")}>
             {section.header}
           </span>
         </div>
@@ -601,8 +601,8 @@ function ThinkingAccordionBox({
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        <div className="border-t border-white/10 bg-black/20 p-4">
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+        <div className="retail-thinking-content border-t border-white/10 bg-black/20 p-4">
+          <div className="retail-thinking-summary rounded-lg border border-white/10 bg-white/[0.03] p-3">
             <p className="text-sm leading-relaxed text-foreground/90">{section.summary}</p>
             <div className="mt-3 space-y-2">
               {section.lines.map((line) => (
@@ -621,7 +621,7 @@ function ThinkingLineItem({ line }: { line: ThinkingLine }) {
     <div className="flex items-start gap-2.5 rounded-md px-1 py-1">
       <span
         className={cn(
-          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+          "retail-thinking-dot mt-1.5 h-2 w-2 shrink-0 rounded-full",
           line.status === "active" && "animate-pulse bg-primary",
           line.status === "complete" && "bg-cyan-300/75",
           line.status === "error" && "bg-red-400",
