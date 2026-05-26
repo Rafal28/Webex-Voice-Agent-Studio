@@ -307,6 +307,46 @@
     height: 64px;
   }
 
+  .pstn-header-actions {
+    min-width: 0;
+  }
+
+  .pstn-webex-stack {
+    width: 174px;
+  }
+
+  .pstn-header-phone {
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    gap: 5px;
+    border-radius: 9999px;
+    padding: 1px 9px;
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 16px;
+    letter-spacing: 0;
+    text-decoration: none;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pstn-header-phone:hover {
+    color: hsl(var(--foreground));
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .pstn-header-phone-muted {
+    color: hsl(var(--muted-foreground));
+  }
+
+  .pstn-header-phone span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .pstn-primary {
     height: calc(100vh - 88px);
     min-height: 0;
@@ -336,7 +376,6 @@
     z-index: 1;
   }
 
-  .pstn-setup-card,
   .pstn-workspace {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -344,7 +383,6 @@
     position: relative;
   }
 
-  .pstn-setup-card::before,
   .pstn-workspace::before {
     content: "";
     position: absolute;
@@ -358,15 +396,9 @@
     mask-composite: exclude;
   }
 
-  .pstn-setup-card > *,
   .pstn-workspace > * {
     position: relative;
     z-index: 1;
-  }
-
-  .pstn-setup-card {
-    padding: 16px;
-    overflow: visible;
   }
 
   .pstn-workspace {
@@ -405,67 +437,6 @@
 
   .pstn-timeline-content:not(:empty) + .pstn-rail-empty {
     display: none;
-  }
-
-  .pstn-agent-card-grid {
-    align-items: stretch;
-  }
-
-  .pstn-setup-title-icon {
-    background: rgba(10, 132, 255, 0.18);
-    border: 1px solid rgba(10, 132, 255, 0.34);
-    color: #7cc4ff;
-  }
-
-  .pstn-setup-title-icon svg {
-    color: currentColor;
-  }
-
-  .pstn-info-row {
-    background: rgba(5, 6, 8, 0.72);
-    border: 1px solid rgba(255, 255, 255, 0.22);
-    border-radius: 12px;
-    min-width: 0;
-    min-height: 136px;
-    box-shadow: none;
-  }
-
-  .pstn-info-row:hover {
-    background: rgba(9, 10, 13, 0.8);
-    border-color: rgba(255, 255, 255, 0.34);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.035),
-      0 4px 20px rgba(100, 180, 250, 0.08);
-  }
-
-  .pstn-info-avatar {
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: rgba(0, 0, 0, 0.88);
-  }
-
-  .pstn-info-row-blue .pstn-info-avatar {
-    background: #0a84ff;
-  }
-
-  .pstn-info-row-green .pstn-info-avatar {
-    background: #45c9a5;
-  }
-
-  .pstn-info-label {
-    letter-spacing: 0;
-  }
-
-  .pstn-info-footer {
-    min-height: 32px;
-  }
-
-  .pstn-info-value {
-    flex: 1 1 auto;
-    min-width: 0;
-    max-width: 100%;
-    color: rgba(255, 255, 255, 0.86);
-    overflow-wrap: anywhere;
-    word-break: normal;
   }
 
   .pstn-chip {
