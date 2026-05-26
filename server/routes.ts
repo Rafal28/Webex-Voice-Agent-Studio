@@ -1591,6 +1591,11 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     return host ? `${proto || "https"}://${host}` : null;
   }
 
+  function getConfiguredTwilioPhoneNumber(): string | null {
+    const phoneNumber = process.env.TWILIO_PHONE_NUMBER?.trim();
+    return phoneNumber || null;
+  }
+
   async function getTwilioAgentId(req: ExpressRequest): Promise<string> {
     const queryAgentId = Array.isArray(req.query?.agentId) ? req.query.agentId[0] : req.query?.agentId;
     const requestedAgentId = String(req.body?.agentId || queryAgentId || "default").trim();
@@ -1724,7 +1729,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   app.get("/api/twilio/status", (req, res) => {
     const smsConfigured = isSmsConfigured();
     const baseUrl = getPublicBaseUrl(req);
-    const phoneNumber = process.env.TWILIO_PHONE_NUMBER || null;
+    const phoneNumber = getConfiguredTwilioPhoneNumber();
     const voiceConfigured = Boolean(baseUrl);
     res.json({
       configured: voiceConfigured && !!phoneNumber,
