@@ -209,7 +209,7 @@ export default function PstnCall() {
 
   if (!hasAgentId) {
     return (
-      <div className="min-h-screen bg-background text-foreground p-6">
+      <div className="pstn-page p-6">
         <Button variant="ghost" className="gap-2" onClick={() => setLocation("/")}>
           <ArrowLeft className="w-4 h-4" />
           Back
@@ -225,19 +225,19 @@ export default function PstnCall() {
   const statusLabel = getMonitorStatusLabel(monitorState);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="border-b border-white/10 bg-background/95">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
+    <div className="pstn-page">
+      <div className="pstn-header">
+        <div className="pstn-header-inner mx-auto flex max-w-[1520px] items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-3 min-w-0">
             <Button variant="ghost" size="icon" onClick={() => setLocation("/")} aria-label="Back">
               <ArrowLeft className="w-4 h-4" />
             </Button>
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 border border-primary/20">
-              <PhoneCall className="w-5 h-5 text-primary" />
+            <div className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-full">
+              <PhoneCall className="w-5 h-5 text-foreground" />
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-xl font-semibold">PSTN Agent Assist</h1>
-              <p className="truncate text-sm text-muted-foreground">
+              <h1 className="truncate text-2xl font-bold leading-8 tracking-normal">PSTN Agent Assist</h1>
+              <p className="truncate text-[13px] leading-5 text-muted-foreground">
                 {agent?.name || "Loading agent..."}
               </p>
             </div>
@@ -252,101 +252,101 @@ export default function PstnCall() {
         </div>
       </div>
 
-      <main className="mx-auto flex max-w-6xl flex-col gap-5 px-6 py-6">
-        <Card className="p-4 bg-card/50 border-white/10">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-500/10 border border-green-500/20">
-                <PhoneCall className="w-5 h-5 text-green-300" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold">Call From A Phone</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Dial the Twilio number. Transcript appears on the left and progress appears on the right.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 lg:min-w-[860px] lg:grid-cols-[minmax(270px,0.9fr)_minmax(0,1.5fr)_minmax(220px,0.8fr)]">
-              <InfoRow
-                className="min-w-[270px]"
-                icon={<PhoneCall className="w-4 h-4" />}
-                label="Twilio number"
-                value={twilioStatus?.phoneNumber || "Set TWILIO_PHONE_NUMBER"}
-                valueDisplay="nowrap"
-                action={
-                  twilioStatus?.phoneNumber ? (
-                    <Button asChild size="sm" className="bg-green-600 hover:bg-green-700 text-white">
-                      <a href={phoneHref}>Call</a>
-                    </Button>
-                  ) : null
-                }
-              />
-
-              <InfoRow
-                icon={<Settings className="w-4 h-4" />}
-                label="Voice webhook"
-                value={agentWebhookUrl || "Set APP_BASE_URL"}
-                valueDisplay="wrap"
-                action={
-                  agentWebhookUrl ? (
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      aria-label="Copy webhook URL"
-                      onClick={() => copyValue("Webhook URL", agentWebhookUrl)}
-                    >
-                      <Clipboard className="w-4 h-4" />
-                    </Button>
-                  ) : null
-                }
-              />
-
-              <InfoRow
-                icon={<CheckCircle2 className="w-4 h-4" />}
-                label="Summary SMS"
-                value={twilioStatus?.smsConfigured ? "Available with consent" : "Not configured"}
-              />
-            </div>
-          </div>
-        </Card>
-
-        <section className="grid min-h-[720px] overflow-hidden rounded-lg border border-white/10 bg-card/40 lg:h-[calc(100vh-280px)] lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="flex min-h-0 min-w-0 flex-col">
-            <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
+      <main className="mx-auto max-w-[1520px] px-6 pb-6">
+        <div className="pstn-primary flex flex-col gap-4">
+          <Card className="pstn-setup-card">
+            <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3">
-                <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
-                  {(monitorState === "waiting" || monitorState === "in-call") && (
-                    <span className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
-                  )}
+                <div className="pstn-setup-title-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-full">
+                  <PhoneCall className="w-5 h-5 text-foreground" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-xl font-bold leading-7 tracking-normal">Call From A Phone</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Dial the Twilio number. Transcript appears on the left and progress appears on the right.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pstn-agent-card-grid grid gap-4 xl:gap-5 md:grid-cols-3">
+                <InfoRow
+                  tone="blue"
+                  icon={<PhoneCall className="w-4 h-4" />}
+                  label="Twilio number"
+                  value={twilioStatus?.phoneNumber || "Set TWILIO_PHONE_NUMBER"}
+                  valueDisplay="nowrap"
+                  action={
+                    twilioStatus?.phoneNumber ? (
+                      <Button asChild size="sm">
+                        <a href={phoneHref}>Call</a>
+                      </Button>
+                    ) : null
+                  }
+                />
+
+                <InfoRow
+                  tone="green"
+                  icon={<Settings className="w-4 h-4" />}
+                  label="Voice webhook"
+                  value={agentWebhookUrl || "Set APP_BASE_URL"}
+                  valueDisplay="wrap"
+                  action={
+                    agentWebhookUrl ? (
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        aria-label="Copy webhook URL"
+                        onClick={() => copyValue("Webhook URL", agentWebhookUrl)}
+                      >
+                        <Clipboard className="w-4 h-4" />
+                      </Button>
+                    ) : null
+                  }
+                />
+
+                <InfoRow
+                  tone="blue"
+                  icon={<CheckCircle2 className="w-4 h-4" />}
+                  label="Summary SMS"
+                  value={twilioStatus?.smsConfigured ? "Available with consent" : "Not configured"}
+                />
+              </div>
+            </div>
+          </Card>
+
+        <section className="pstn-workspace grid flex-1 lg:grid-cols-[minmax(0,1fr)_400px]">
+          <div className="flex min-h-0 min-w-0 flex-col">
+            <div className="pstn-section-header flex shrink-0 items-center justify-between gap-4 px-5">
+              <div className="flex items-center gap-3">
+                <div className="app-icon-tile relative flex h-10 w-10 items-center justify-center rounded-full">
                   {monitorState === "connecting" ? (
-                    <Loader2 className="relative z-10 w-4 h-4 animate-spin text-primary" />
+                    <Loader2 className="relative z-10 w-4 h-4 text-foreground" />
                   ) : (
-                    <Radio className="relative z-10 w-4 h-4 text-primary" />
+                    <Radio className="relative z-10 w-4 h-4 text-foreground" />
                   )}
                 </div>
                 <div>
-                  <h2 className="text-base font-semibold">Live PSTN Transcript</h2>
+                  <h2 className="text-[15px] font-bold leading-5 tracking-normal">Live PSTN Transcript</h2>
                   <p className="text-xs text-muted-foreground">{statusLabel}</p>
                 </div>
               </div>
-              <Badge variant="outline" className="border-white/10 text-muted-foreground">
+              <Badge variant="outline" className="pstn-chip">
                 Browser monitor
               </Badge>
             </div>
 
-            <div ref={transcriptRef} className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
+            <div ref={transcriptRef} className="pstn-transcript-pane min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
               {isLoading && (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-2 h-4 w-4" />
                   Loading PSTN monitor...
                 </div>
               )}
 
               {!isLoading && transcript.length === 0 && (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
-                    <Mic className="h-8 w-8 text-primary/70" />
+                  <div className="app-icon-tile flex h-16 w-16 items-center justify-center rounded-full">
+                    <Mic className="h-8 w-8 text-foreground" />
                   </div>
                   <p className="max-w-sm text-sm">
                     Waiting for a PSTN call on {agent?.name || "this agent"}. The live transcript will appear here.
@@ -364,10 +364,31 @@ export default function PstnCall() {
               ))}
             </div>
           </div>
-          <aside className="min-h-0 border-t border-white/10 p-4 lg:border-l lg:border-t-0 lg:overflow-hidden">
-            <RetailProgressTimeline state={assistState} className="h-full overflow-y-auto" />
+          <aside className="pstn-side-pane flex min-h-0 flex-col border-t lg:border-l lg:border-t-0 lg:overflow-hidden">
+            <div className="pstn-rail-header flex shrink-0 items-center gap-3 px-5">
+              <div className="app-icon-tile flex h-10 w-10 shrink-0 items-center justify-center rounded-full">
+                <Bot className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-[15px] font-bold leading-5 tracking-normal">Agent assist timeline</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">Live tool progress and handoff context</p>
+              </div>
+            </div>
+            <div className="pstn-timeline-shell min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="pstn-timeline-content">
+                <RetailProgressTimeline className="pstn-progress-timeline" state={assistState} />
+              </div>
+              <div className="pstn-rail-empty flex h-full min-h-[320px] flex-col items-center justify-center rounded-lg p-6 text-center">
+                <Radio className="mb-3 h-5 w-5 text-foreground" />
+                <p className="text-sm font-medium text-foreground">Waiting for call activity</p>
+                <p className="mt-1 max-w-[240px] text-xs leading-relaxed">
+                  Verification, inventory lookup, reservation, and handoff events will appear here.
+                </p>
+              </div>
+            </div>
           </aside>
         </section>
+        </div>
       </main>
     </div>
   );
@@ -378,6 +399,7 @@ function InfoRow({
   className,
   icon,
   label,
+  tone = "blue",
   value,
   valueDisplay = "truncate",
 }: {
@@ -385,25 +407,30 @@ function InfoRow({
   className?: string;
   icon: ReactNode;
   label: string;
+  tone?: "blue" | "green";
   value: string;
   valueDisplay?: "truncate" | "wrap" | "nowrap";
 }) {
   const valueClassName = {
-    truncate: "truncate text-sm font-medium",
-    wrap: "mt-1 whitespace-normal break-all font-mono text-[12px] leading-relaxed text-foreground",
-    nowrap: "whitespace-nowrap text-sm font-medium tabular-nums",
+    truncate: "pstn-info-value truncate text-[13px] font-semibold",
+    wrap: "pstn-info-value truncate font-mono text-[12px] font-medium",
+    nowrap: "pstn-info-value truncate whitespace-nowrap text-[13px] font-semibold tabular-nums",
   }[valueDisplay];
 
   return (
-    <div className={`flex items-start gap-3 rounded-md border border-white/10 bg-white/[0.03] p-3 ${className || ""}`}>
-      <div className="mt-1 text-muted-foreground">{icon}</div>
-      <div className="min-w-0 flex-1">
-        <div className="text-xs text-muted-foreground">{label}</div>
+    <div className={`pstn-info-row pstn-info-row-${tone} flex min-w-0 flex-col gap-3.5 p-4 ${className || ""}`}>
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="pstn-info-avatar flex h-11 w-11 shrink-0 items-center justify-center rounded-full">{icon}</div>
+        <div className="min-w-0 flex-1">
+          <div className="pstn-info-label truncate text-base font-bold text-foreground">{label}</div>
+        </div>
+      </div>
+      <div className="pstn-info-footer mt-auto flex min-w-0 items-end justify-between gap-3">
         <div className={valueClassName}>
           {value}
         </div>
+        {action && <div className="shrink-0">{action}</div>}
       </div>
-      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }
@@ -411,7 +438,7 @@ function InfoRow({
 function Step({ number, text }: { number: string; text: string }) {
   return (
     <div className="flex gap-3">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-xs font-semibold text-foreground">
         {number}
       </span>
       <p>{text}</p>
@@ -423,7 +450,7 @@ function TranscriptBubble({ entry, agentName, callerPhone }: { entry: Transcript
   if (entry.role === "system") {
     return (
       <div className="flex justify-center">
-        <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
+        <div className="pstn-message-system rounded-full px-3 py-1 text-xs text-muted-foreground">
           {entry.text}
         </div>
       </div>
@@ -433,8 +460,8 @@ function TranscriptBubble({ entry, agentName, callerPhone }: { entry: Transcript
   const isUser = entry.role === "user";
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
-      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-        isUser ? "bg-purple-500 text-white" : "bg-primary text-black"
+      <div className={`pstn-message-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+        isUser ? "pstn-message-avatar-user" : "pstn-message-avatar-assistant"
       }`}>
         {isUser ? "U" : <Bot className="h-4 w-4" />}
       </div>
@@ -444,8 +471,8 @@ function TranscriptBubble({ entry, agentName, callerPhone }: { entry: Transcript
         </div>
         <div className={`inline-block max-w-[85%] rounded-xl border p-3 text-left text-sm ${
           isUser
-            ? "rounded-tr-none border-purple-500/20 bg-purple-500/10"
-            : "rounded-tl-none border-white/10 bg-white/[0.05]"
+            ? "pstn-message-user rounded-tr-none"
+            : "pstn-message-assistant rounded-tl-none"
         }`}>
           {entry.text}
         </div>
@@ -489,14 +516,14 @@ function getMonitorStatusLabel(state: MonitorState): string {
 function getMonitorBadgeClass(state: MonitorState): string {
   switch (state) {
     case "connecting":
-      return "bg-yellow-500/10 text-yellow-300 border-yellow-500/20";
+      return "status-warning";
     case "waiting":
-      return "bg-blue-500/10 text-blue-300 border-blue-500/20";
+      return "status-info";
     case "in-call":
-      return "bg-green-500/10 text-green-300 border-green-500/20";
+      return "status-success";
     case "ended":
-      return "bg-white/5 text-muted-foreground border-white/10";
+      return "status-muted";
     case "error":
-      return "bg-red-500/10 text-red-300 border-red-500/20";
+      return "status-danger";
   }
 }
