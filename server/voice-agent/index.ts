@@ -30,9 +30,6 @@ import {
   isStandaloneFinalCheckInTranscript,
 } from "./answer-intent";
 
-const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
-const BROWSER_TRANSCRIPT_ECHO_GUARD_MS = 650;
-const BROWSER_ASSISTANT_ECHO_MATCH_MS = 5000;
 const TWILIO_TRANSCRIPT_ECHO_GUARD_MS = 1200;
 const TWILIO_ASSISTANT_ECHO_MATCH_MS = 10000;
 const BROWSER_PCM16_SAMPLE_RATE = 24000;
@@ -69,13 +66,10 @@ const RETAIL_VOICE_PRODUCT_TERMS = new Set([
 ]);
 
 interface BrowserTranscriptGuardContext {
-  acceptedUserTranscriptCount: number;
   browserPlaybackActive: boolean;
-  language: string;
   lastAssistantAudioAt: number;
   lastAssistantDoneAt: number;
   lastAssistantTranscript: string;
-  lastBrowserPlaybackEndedAt: number;
   responseActive: boolean;
 }
 
@@ -677,23 +671,6 @@ function sanitizeWhatsAppToolResult(
   };
 }
 
-function getPrimaryLanguageCode(language: string | undefined): string {
-  const normalized = (language || "en").trim().toLowerCase();
-  const languageNameMap: Record<string, string> = {
-    chinese: "zh",
-    english: "en",
-    french: "fr",
-    german: "de",
-    japanese: "ja",
-    spanish: "es",
-  };
-  return languageNameMap[normalized] || normalized.split(/[-_]/)[0] || "en";
-}
-
-function isEnglishLanguage(language: string): boolean {
-  return getPrimaryLanguageCode(language) === "en";
-}
-
 function hasMostlyNonLatinLetters(text: string): boolean {
   const latinLetters = text.match(/[A-Za-z]/g)?.length || 0;
   const nonAsciiChars = text.match(/[\u0080-\uFFFF]/g)?.length || 0;
@@ -831,6 +808,23 @@ function isConstrainedRetailAnswerTurn(lastAssistantTranscript?: string): boolea
   );
 }
 
+function isPlausibleConstrainedRetailAnswerTranscript(text: string, lastAssistantTranscript?: string): boolean {
+  if (!isConstrainedRetailAnswerTurn(lastAssistantTranscript)) return false;
+  const normalized = normalizeIntentText(text);
+  if (!normalized || isBriefGreetingTranscript(normalized) || isEndCallIntent(normalized)) return false;
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length > 6) return false;
+  if (/\b(which|what|where|would|could|should|can|do|does|did|are|you|your|like|want|need|prefer)\b/.test(normalized)) {
+    return false;
+  }
+  if (/\b(option|product|store|pickup|pick up|available|inventory|stock)\b/.test(normalized) && words.length <= 2) {
+    return false;
+  }
+
+  return true;
+}
+
 function applyConstrainedRetailTranscriptCorrection(text: string, lastAssistantTranscript?: string): string {
   if (!isConstrainedRetailAnswerTurn(lastAssistantTranscript)) return text;
   const assistant = normalizeIntentText(lastAssistantTranscript || "");
@@ -875,7 +869,26 @@ function shouldReviewUserTranscript(
   return false;
 }
 
-async function reviewEnglishUserTranscript(
+function fallbackTranscriptReview(
+  textForReview: string,
+  hasContextCorrection: boolean,
+  context: { lastAssistantTranscript?: string } = {}
+): { action: "keep" | "replace" | "suppress"; text: string } {
+  if (hasContextCorrection) return { action: "replace", text: textForReview };
+  if (isConstrainedRetailAnswerTurn(context.lastAssistantTranscript)) {
+    return { action: "keep", text: textForReview };
+  }
+  if (
+    hasMostlyNonLatinLetters(textForReview) ||
+    hasSpanishMarkers(textForReview) ||
+    isLikelyGibberishTranscript(textForReview)
+  ) {
+    return { action: "suppress", text: "" };
+  }
+  return { action: "keep", text: textForReview };
+}
+
+export async function reviewEnglishUserTranscript(
   rawText: string,
   context: { agentName: string; lastAssistantTranscript?: string; lastUserTranscript?: string }
 ): Promise<{ action: "keep" | "replace" | "suppress"; text: string }> {
@@ -891,7 +904,7 @@ async function reviewEnglishUserTranscript(
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return hasContextCorrection ? { action: "replace", text: textForReview } : { action: "suppress", text: "" };
+    return fallbackTranscriptReview(textForReview, hasContextCorrection, context);
   }
 
   try {
@@ -926,7 +939,7 @@ async function reviewEnglishUserTranscript(
       }),
     });
 
-    if (!response.ok) return { action: "suppress", text: "" };
+    if (!response.ok) return fallbackTranscriptReview(textForReview, hasContextCorrection, context);
     const data = await response.json() as any;
     const parsed = JSON.parse(data.choices?.[0]?.message?.content || "{}");
     const action = parsed.action === "replace" || parsed.action === "suppress" ? parsed.action : "keep";
@@ -948,7 +961,7 @@ async function reviewEnglishUserTranscript(
     if (action === "keep" && hasContextCorrection) return { action: "replace", text: textForReview };
     return { action, text: corrected };
   } catch {
-    return { action: "suppress", text: "" };
+    return fallbackTranscriptReview(textForReview, hasContextCorrection, context);
   }
 }
 
@@ -996,7 +1009,7 @@ function isLikelyAssistantEchoTranscript(userText: string, assistantText: string
   return normalizedAssistant.includes(normalizedUser) || hasHighAssistantEchoOverlap(normalizedUser, normalizedAssistant);
 }
 
-function shouldSuppressTwilioUserTranscript(
+export function shouldSuppressTwilioUserTranscript(
   text: string,
   context: {
     lastAssistantAudioAt: number;
@@ -1015,6 +1028,9 @@ function shouldSuppressTwilioUserTranscript(
     context.twilioResponseActive;
   if (recentAssistant && isBriefGreetingTranscript(normalized)) {
     return true;
+  }
+  if (isPlausibleConstrainedRetailAnswerTranscript(normalized, context.lastAssistantTranscript)) {
+    return false;
   }
   if (
     recentAssistant &&
@@ -1063,58 +1079,16 @@ function getG711DurationMs(base64Audio: string, sampleRate: number): number {
   return (byteLength / sampleRate) * 1000;
 }
 
-function shouldSuppressBrowserUserTranscript(
+export function shouldSuppressBrowserUserTranscript(
   text: string,
   context: BrowserTranscriptGuardContext
 ): boolean {
-  const normalized = normalizeTranscript(text);
-  if (!normalized) return true;
-
-  const now = Date.now();
-  const justAfterAssistant =
-    now - context.lastAssistantDoneAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS ||
-    now - context.lastAssistantAudioAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS ||
-    now - context.lastBrowserPlaybackEndedAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS;
-  const duringAssistantOutput = context.responseActive || context.browserPlaybackActive || justAfterAssistant;
-  const recentAssistant =
-    context.responseActive ||
-    context.browserPlaybackActive ||
-    now - context.lastAssistantDoneAt < BROWSER_ASSISTANT_ECHO_MATCH_MS ||
-    now - context.lastAssistantAudioAt < BROWSER_ASSISTANT_ECHO_MATCH_MS ||
-    now - context.lastBrowserPlaybackEndedAt < BROWSER_ASSISTANT_ECHO_MATCH_MS;
-
-  if (isEnglishLanguage(context.language) && hasMostlyNonLatinLetters(normalized)) {
-    return true;
-  }
-
-  if (recentAssistant && isBriefGreetingTranscript(normalized)) {
-    return true;
-  }
-  if (
-    recentAssistant &&
-    context.lastAssistantTranscript &&
-    isLikelyAssistantGreetingEchoTranscript(normalized, context.lastAssistantTranscript)
-  ) {
-    return true;
-  }
-
-  const words = normalized.split(/\s+/).filter(Boolean);
-  if (duringAssistantOutput && words.length <= 2 && !isBriefButValidTranscript(normalized)) {
-    return true;
-  }
-
-  if (
-    recentAssistant &&
-    context.lastAssistantTranscript &&
-    isLikelyAssistantEchoTranscript(normalized, context.lastAssistantTranscript)
-  ) {
-    return true;
-  }
-
-  const isShortFarewell = SPURIOUS_SHORT_TRANSCRIPTS.has(normalized);
-  if (!isShortFarewell) return false;
-
-  return context.acceptedUserTranscriptCount === 0;
+  return shouldSuppressTwilioUserTranscript(text, {
+    lastAssistantAudioAt: context.lastAssistantAudioAt,
+    lastAssistantDoneAt: context.lastAssistantDoneAt,
+    lastAssistantTranscript: context.lastAssistantTranscript,
+    twilioResponseActive: context.responseActive || context.browserPlaybackActive,
+  });
 }
 
 export function attachVoiceAgentWebSocket(server: Server): void {
@@ -2573,8 +2547,6 @@ function handleBrowserSession(ws: WebSocket): void {
   let lastAssistantAudioAt = 0;
   let lastAssistantDoneAt = 0;
   let lastAssistantTranscript = "";
-  let lastBrowserPlaybackEndedAt = 0;
-  let acceptedUserTranscriptCount = 0;
   let language = "en-US";
   let pendingEndCall = false;
   let endingCall = false;
@@ -2639,6 +2611,7 @@ function handleBrowserSession(ws: WebSocket): void {
         lastAssistantTranscript = "";
         lastUserTranscript = "";
         browserCallStartedAt = Date.now();
+        browserInputEnabled = true;
         browserCallEndedSent = false;
         latestReservation = null;
         latestRecommendedUpsell = "";
@@ -2784,24 +2757,12 @@ ${startupRetailContext}`;
             sendEvent({ type: "userSpeechStopped", timestamp: Date.now() });
             return;
           }
-          if (initialGreetingActive) {
-            console.warn(`[VoiceAgent/Browser] Suppressed user transcript during opening greeting: ${trimmed}`);
-            releaseProvisionalBrowserBargeIn();
-            clearPendingBrowserUserSpeechCandidate();
-            browserUserSpeechUiActive = false;
-            sendEvent({ type: "userTranscriptSuppressed" });
-            sendEvent({ type: "userSpeechStopped", timestamp: Date.now() });
-            return;
-          }
           if (
             shouldSuppressBrowserUserTranscript(trimmed, {
-              acceptedUserTranscriptCount,
               browserPlaybackActive,
-              language,
               lastAssistantAudioAt,
               lastAssistantDoneAt,
               lastAssistantTranscript: assistantTranscriptGuard || lastAssistantTranscript,
-              lastBrowserPlaybackEndedAt,
               responseActive,
             })
           ) {
@@ -2831,7 +2792,6 @@ ${startupRetailContext}`;
             console.warn(`[VoiceAgent/Browser] Corrected user transcript: "${trimmed}" -> "${reviewed.text}"`);
           }
 
-          acceptedUserTranscriptCount++;
           lastUserTranscript = reviewed.text;
           transcriptEntries.push({
             role: "Customer",
@@ -3201,7 +3161,6 @@ ${startupRetailContext}`;
         }
       } else if (msg.type === "assistantPlaybackEnded") {
         browserPlaybackActive = false;
-        lastBrowserPlaybackEndedAt = Date.now();
         browserPlaybackStartedAt = 0;
         if (initialGreetingActive) {
           scheduleInitialGreetingRelease(650);
@@ -3573,13 +3532,10 @@ ${startupRetailContext}`;
     if (!hasEnoughTranscriptForProvisionalBargeIn(text, { allowBriefValid: true })) return;
     if (
       shouldSuppressBrowserUserTranscript(text, {
-        acceptedUserTranscriptCount,
         browserPlaybackActive,
-        language,
         lastAssistantAudioAt,
         lastAssistantDoneAt,
         lastAssistantTranscript: assistantTranscriptGuard || lastAssistantTranscript,
-        lastBrowserPlaybackEndedAt,
         responseActive,
       })
     ) return;
@@ -3866,7 +3822,6 @@ ${startupRetailContext}`;
 
     truncateBrowserAssistantAudio();
     browserPlaybackActive = false;
-    lastBrowserPlaybackEndedAt = Date.now();
     currentAssistantItemId = "";
     currentAssistantAudioSentMs = 0;
     browserPlaybackStartedAt = 0;
