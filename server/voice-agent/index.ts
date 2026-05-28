@@ -4,28 +4,12 @@ import * as fs from "fs";
 import * as path from "path";
 import OpenAI from "openai";
 import { OpenAIRealtimeClient, RealtimeSessionConfig } from "./openai-realtime";
+import { CallSession, type CallLifecycleState } from "./call-session";
+import { mapRealtimeVoice } from "./voice";
 import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
-
-const OPENAI_REALTIME_VOICE_MAP: Record<string, string> = {
-  alloy: "alloy",
-  echo: "echo",
-  shimmer: "shimmer",
-  "aura-asteria-en": "alloy",
-  "aura-luna-en": "shimmer",
-  "aura-stella-en": "shimmer",
-  "aura-orion-en": "echo",
-  "aura-arcas-en": "ash",
-  "aura-perseus-en": "echo",
-};
-
-function mapVoice(voice: string): string {
-  const valid = ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"];
-  if (valid.includes(voice)) return voice;
-  return OPENAI_REALTIME_VOICE_MAP[voice] || "alloy";
-}
 
 const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
 const BROWSER_AUDIO_ECHO_GUARD_MS = 350;
@@ -71,6 +55,7 @@ interface BrowserTranscriptGuardContext {
 type TwilioMonitorEvent =
   | { type: "connected"; agentId: string }
   | { type: "callStarted"; agentId: string; callSid?: string; streamSid?: string; callerPhone?: string; timestamp: number }
+  | { type: "callStateChanged"; agentId: string; state: CallLifecycleState; previousState?: CallLifecycleState; reason: string; timestamp: number }
   | { type: "callEnded"; agentId: string; timestamp: number }
   | { type: "smsSent"; agentId: string; to: string; timestamp: number }
   | { type: "toolCallStarted"; agentId: string; toolName: string; args?: Record<string, any>; timestamp: number }
@@ -312,7 +297,8 @@ Never end the call because an item is unavailable, unsupported, or not in invent
 ${callerIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, call retail_recommend_accessory for the reserved product before the call ends.
+After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a confirmation text will be sent to the phone number on this call, and give the reservation reference out loud. This order confirmation text is part of the reservation flow and is separate from the optional call-summary text.
+After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 If SMS sending fails, do not mention provider, regional, permission, API, or configuration errors. Say SMS is having issues right now and provide the reservation or order reference verbally.
 If the caller is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
 
@@ -338,7 +324,8 @@ Do not repeat the opening greeting after the first assistant turn.
 ${browserIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, call retail_recommend_accessory for the reserved product before the call ends.
+After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a confirmation text will be sent, and give the reservation reference out loud. This order confirmation text is part of the reservation flow and is separate from the optional call-summary text.
+After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 For product, store, price, and inventory questions, answer normally.
 If SMS sending fails, do not mention provider, regional, permission, API, or configuration errors. Say SMS is having issues right now and provide the reservation or order reference verbally.
 If the user is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
@@ -365,7 +352,7 @@ function getRetailToolEventType(
       return "customerContextLoaded";
     case "retail_lookup_inventory":
       return "inventoryUpdated";
-    case "retail_recommend_accessory":
+    case "retail_recommend_gift_accessory":
       return "recommendationCreated";
     case "retail_reserve_item":
       return "reservationCreated";
@@ -893,6 +880,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let suppressNextTwilioResponseTimer: ReturnType<typeof setTimeout> | null = null;
   let assistantTranscriptGuard = "";
   let callEndedSent = false;
+  let callSession = new CallSession("twilio");
   let pendingEndCall = false;
   let endingCall = false;
   let endCallTimer: ReturnType<typeof setTimeout> | null = null;
@@ -928,6 +916,14 @@ function handleTwilioSession(ws: WebSocket): void {
         callStartedAt = Date.now();
         callSid = msg.start.callSid;
         activeCallSid = typeof callSid === "string" ? callSid : null;
+        callSession = new CallSession("twilio", String(callSid || msg.start.streamSid || Date.now()));
+        pendingEndCall = false;
+        endingCall = false;
+        callEndedSent = false;
+        if (endCallTimer) {
+          clearTimeout(endCallTimer);
+          endCallTimer = null;
+        }
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
         let voice = "alloy";
@@ -960,7 +956,7 @@ function handleTwilioSession(ws: WebSocket): void {
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
-            voice = mapVoice(agent.voiceModel);
+            voice = mapRealtimeVoice(agent.voiceModel);
             language = agent.language || language;
             monitorAgentId = resolvedAgentId;
           }
@@ -974,6 +970,7 @@ function handleTwilioSession(ws: WebSocket): void {
           callerPhone: callerPhone !== "Unknown" ? callerPhone : undefined,
           timestamp: Date.now(),
         });
+        emitTwilioCallStateChange(callSession.activate("Call started"));
 
         startupRetailContext = callerPhone !== "Unknown" ? await runStartupRetailLookups() : "";
         const returningCallerName = startupRetailContext ? "John" : undefined;
@@ -1208,6 +1205,7 @@ ${startupRetailContext}`;
               args,
               timestamp: Date.now(),
             });
+            emitTwilioCallStateChange(callSession.beginTool(name));
             const rawResult = name === TWILIO_CALLER_SUMMARY_TOOL.name
               ? await sendCallerSummarySms(args, callerPhone, monitorAgentId)
               : await executeTool(name, args);
@@ -1226,7 +1224,7 @@ ${startupRetailContext}`;
                 });
               }
             }
-            if (result.success && name === "retail_recommend_accessory") {
+            if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
             }
             sendTwilioMonitorEvent(monitorAgentId, {
@@ -1240,6 +1238,7 @@ ${startupRetailContext}`;
               durationMs: result.durationMs,
               timestamp: Date.now(),
             });
+            emitTwilioCallStateChange(callSession.finishTool(name));
             const retailEventType = getRetailToolEventType(name);
             if (retailEventType && result.success && result.data !== undefined) {
               sendTwilioMonitorEvent(monitorAgentId, {
@@ -1250,14 +1249,15 @@ ${startupRetailContext}`;
               });
             }
             console.log(`[VoiceAgent/Twilio] Function result:`, result);
-            if (pendingEndCall || endingCall || suppressAssistantOutput) {
+            if (!callSession.canAcceptToolOutput() || pendingEndCall || endingCall || suppressAssistantOutput) {
               console.warn(`[VoiceAgent/Twilio] Skipping stale function output for ${name}`);
               return;
             }
             openai?.sendFunctionOutput(callId, JSON.stringify(result));
           } catch (e: any) {
             console.error(`[VoiceAgent/Twilio] Function execution failed:`, e);
-            if (pendingEndCall || endingCall || suppressAssistantOutput) return;
+            emitTwilioCallStateChange(callSession.finishTool(name));
+            if (!callSession.canAcceptToolOutput() || pendingEndCall || endingCall || suppressAssistantOutput) return;
             openai?.sendFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
           }
         });
@@ -1327,16 +1327,30 @@ ${startupRetailContext}`;
   function sendCallEnded(): void {
     if (callEndedSent) return;
     callEndedSent = true;
+    emitTwilioCallStateChange(callSession.startPostCall("Post-call work started"));
     const endedAt = Date.now();
     void (async () => {
       await sendOrderConfirmationSms();
       await sendStoreManagerSummary(endedAt);
+      emitTwilioCallStateChange(callSession.end("Call ended"));
       sendTwilioMonitorEvent(monitorAgentId, {
         type: "callEnded",
         agentId: monitorAgentId,
         timestamp: Date.now(),
       });
     })();
+  }
+
+  function emitTwilioCallStateChange(change: ReturnType<CallSession["activate"]>): void {
+    if (!change) return;
+    sendTwilioMonitorEvent(monitorAgentId, {
+      type: "callStateChanged",
+      agentId: monitorAgentId,
+      state: change.state,
+      previousState: change.previousState,
+      reason: change.reason,
+      timestamp: change.timestamp,
+    });
   }
 
   async function sendStoreManagerSummary(endedAt: number): Promise<void> {
@@ -1460,7 +1474,7 @@ ${startupRetailContext}`;
 
   function runTwilioEndCallTool(reason: string, source: "tool" | "intent"): { success: boolean; result: string; data: { reason: string } } {
     const result = createEndCallResult(reason);
-    if (pendingEndCall || endingCall) return result;
+    if (callSession.isEndingOrEnded() || pendingEndCall || endingCall) return result;
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallStarted",
       agentId: monitorAgentId,
@@ -1483,6 +1497,7 @@ ${startupRetailContext}`;
 
   function scheduleTwilioEndCall(reason: string, delayMs: number): void {
     pendingEndCall = true;
+    emitTwilioCallStateChange(callSession.startWrapUp(reason));
     if (endCallTimer) return;
     endCallTimer = setTimeout(() => {
       completeTwilioEndCall(reason).catch((error) => {
@@ -1492,7 +1507,7 @@ ${startupRetailContext}`;
   }
 
   async function completeTwilioEndCall(reason: string): Promise<void> {
-    if (endingCall) return;
+    if (endingCall || callSession.lifecycleState === "ended") return;
     endingCall = true;
     pendingEndCall = false;
     if (endCallTimer) {
@@ -1574,6 +1589,7 @@ ${startupRetailContext}`;
     clearTwilioIdleFollowUp();
     if (
       assistantTurnCount <= 1 ||
+      !callSession.canPromptCaller() ||
       pendingEndCall ||
       endingCall ||
       idleFollowUpSent ||
@@ -1584,6 +1600,7 @@ ${startupRetailContext}`;
       if (
         !openai ||
         twilioResponseActive ||
+        !callSession.canPromptCaller() ||
         pendingEndCall ||
         endingCall ||
         idleFollowUpSent ||
@@ -1611,9 +1628,10 @@ ${startupRetailContext}`;
   }
 
   function requestTwilioGracefulEndCall(reason: string, source: "tool" | "intent" = "intent"): void {
-    if (pendingEndCall || endingCall) return;
+    if (callSession.isEndingOrEnded() || pendingEndCall || endingCall) return;
     clearTwilioIdleFollowUp();
     pendingEndCall = true;
+    emitTwilioCallStateChange(callSession.startWrapUp(reason));
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallStarted",
       agentId: monitorAgentId,
@@ -1630,30 +1648,33 @@ ${startupRetailContext}`;
       data: { reason },
       timestamp: Date.now(),
     });
-    openai?.triggerResponse({
-      input: [
-        {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: getClosingInstruction(reason),
-            },
-          ],
-        },
-      ],
-      output_modalities: ["audio"],
-      instructions:
-        "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
-    });
+    const alreadySaidClosing = /thanks for (calling|your time)|good (rest|day)|have a (great|good|wonderful|nice)|goodbye|take care|bye now/i.test(lastAssistantTranscript);
+    if (!alreadySaidClosing) {
+      openai?.triggerResponse({
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: getClosingInstruction(reason),
+              },
+            ],
+          },
+        ],
+        output_modalities: ["audio"],
+        instructions:
+          "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
+      });
+    }
     scheduleTwilioEndCall(reason, TWILIO_END_CALL_FALLBACK_MS);
   }
 
   function maybeCompleteTwilioPendingEndCall(reason: string): void {
-    if (!pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
+    if (callSession.lifecycleState === "ended" || !pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
     setTimeout(() => {
-      if (!pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
+      if (callSession.lifecycleState === "ended" || !pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
       completeTwilioEndCall(reason).catch((error) => {
         console.error("[VoiceAgent/Twilio] End-call completion failed:", error);
       });
@@ -1776,6 +1797,7 @@ function handleBrowserSession(ws: WebSocket): void {
   let assistantTranscriptGuard = "";
   let browserCallStartedAt: number | null = null;
   let browserCallEndedSent = false;
+  let browserCallSession = new CallSession("browser");
   let latestReservation: RetailReservationDetails | null = null;
   let latestRecommendedUpsell = "";
   let startupRetailContext = "";
@@ -1807,6 +1829,13 @@ function handleBrowserSession(ws: WebSocket): void {
         lastUserTranscript = "";
         browserCallStartedAt = Date.now();
         browserCallEndedSent = false;
+        browserCallSession = new CallSession("browser");
+        pendingEndCall = false;
+        endingCall = false;
+        if (endCallTimer) {
+          clearTimeout(endCallTimer);
+          endCallTimer = null;
+        }
         latestReservation = null;
         latestRecommendedUpsell = "";
         startupRetailContext = "";
@@ -1820,7 +1849,7 @@ function handleBrowserSession(ws: WebSocket): void {
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
-            voice = mapVoice(agent.voiceModel);
+            voice = mapRealtimeVoice(agent.voiceModel);
             language = agent.language || language;
           }
         }
@@ -2121,6 +2150,7 @@ ${startupRetailContext}`;
               args,
               timestamp: Date.now(),
             });
+            sendBrowserCallStateChanged(browserCallSession.beginTool(name));
             const rawResult = await executeTool(name, args);
             const result = name === "twilio_sms"
               ? sanitizeSmsToolResult(rawResult, latestReservation)
@@ -2136,7 +2166,7 @@ ${startupRetailContext}`;
                 });
               }
             }
-            if (result.success && name === "retail_recommend_accessory") {
+            if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
             }
             sendEvent({
@@ -2149,6 +2179,7 @@ ${startupRetailContext}`;
               durationMs: result.durationMs,
               timestamp: Date.now(),
             });
+            sendBrowserCallStateChanged(browserCallSession.finishTool(name));
             const retailEventType = getRetailToolEventType(name);
             if (retailEventType && result.success && result.data !== undefined) {
               sendEvent({
@@ -2158,20 +2189,22 @@ ${startupRetailContext}`;
               });
             }
             console.log(`[VoiceAgent/Browser] Function result:`, result);
-            if (pendingEndCall || endingCall || suppressAssistantOutput) {
+            if (!browserCallSession.canAcceptToolOutput() || pendingEndCall || endingCall || suppressAssistantOutput) {
               console.warn(`[VoiceAgent/Browser] Skipping stale function output for ${name}`);
               return;
             }
             openai?.sendFunctionOutput(callId, JSON.stringify(result));
           } catch (e: any) {
             console.error(`[VoiceAgent/Browser] Function execution failed:`, e);
-            if (pendingEndCall || endingCall || suppressAssistantOutput) return;
+            sendBrowserCallStateChanged(browserCallSession.finishTool(name));
+            if (!browserCallSession.canAcceptToolOutput() || pendingEndCall || endingCall || suppressAssistantOutput) return;
             openai?.sendFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
           }
         });
 
         openai.connect();
         sendEvent({ type: "connected" });
+        sendBrowserCallStateChanged(browserCallSession.activate("Browser voice session started"));
       } else if (msg.type === "stop") {
         clearBrowserIdleFollowUp();
         void sendBrowserCallEnded("Browser voice session stopped");
@@ -2211,7 +2244,7 @@ ${startupRetailContext}`;
 
   function runBrowserEndCallTool(reason: string, source: "tool" | "intent"): { success: boolean; result: string; data: { reason: string } } {
     const result = createEndCallResult(reason);
-    if (pendingEndCall || endingCall) return result;
+    if (browserCallSession.isEndingOrEnded() || pendingEndCall || endingCall) return result;
     sendEvent({
       type: "toolCallStarted",
       toolName: VOICE_END_CALL_TOOL.name,
@@ -2232,6 +2265,7 @@ ${startupRetailContext}`;
 
   function scheduleBrowserEndCall(reason: string, delayMs: number): void {
     pendingEndCall = true;
+    sendBrowserCallStateChanged(browserCallSession.startWrapUp(reason));
     if (endCallTimer) return;
     endCallTimer = setTimeout(() => {
       void completeBrowserEndCall(reason);
@@ -2239,7 +2273,7 @@ ${startupRetailContext}`;
   }
 
   async function completeBrowserEndCall(reason: string): Promise<void> {
-    if (endingCall) return;
+    if (endingCall || browserCallSession.lifecycleState === "ended") return;
     endingCall = true;
     pendingEndCall = false;
     if (endCallTimer) {
@@ -2260,11 +2294,13 @@ ${startupRetailContext}`;
   async function sendBrowserCallEnded(reason: string): Promise<void> {
     if (browserCallEndedSent) return;
     browserCallEndedSent = true;
+    sendBrowserCallStateChanged(browserCallSession.startPostCall("Browser post-call work started"));
     const endedAt = Date.now();
     await Promise.all([
       sendBrowserOrderConfirmationSms(),
       sendBrowserStoreManagerSummary(endedAt),
     ]);
+    sendBrowserCallStateChanged(browserCallSession.end(reason));
     sendEvent({ type: "callEnded", reason, timestamp: Date.now() });
   }
 
@@ -2372,6 +2408,7 @@ ${startupRetailContext}`;
     clearBrowserIdleFollowUp();
     if (
       assistantTurnCount <= 1 ||
+      !browserCallSession.canPromptCaller() ||
       pendingEndCall ||
       endingCall ||
       idleFollowUpSent ||
@@ -2382,6 +2419,7 @@ ${startupRetailContext}`;
       if (
         !openai ||
         responseActive ||
+        !browserCallSession.canPromptCaller() ||
         pendingEndCall ||
         endingCall ||
         idleFollowUpSent ||
@@ -2409,9 +2447,10 @@ ${startupRetailContext}`;
   }
 
   function requestBrowserGracefulEndCall(reason: string, source: "tool" | "intent" = "intent"): void {
-    if (pendingEndCall || endingCall) return;
+    if (browserCallSession.isEndingOrEnded() || pendingEndCall || endingCall) return;
     clearBrowserIdleFollowUp();
     pendingEndCall = true;
+    sendBrowserCallStateChanged(browserCallSession.startWrapUp(reason));
     sendEvent({
       type: "toolCallStarted",
       toolName: VOICE_END_CALL_TOOL.name,
@@ -2426,30 +2465,33 @@ ${startupRetailContext}`;
       data: { reason },
       timestamp: Date.now(),
     });
-    openai?.triggerResponse({
-      input: [
-        {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: getClosingInstruction(reason),
-            },
-          ],
-        },
-      ],
-      output_modalities: ["audio"],
-      instructions:
-        "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
-    });
+    const alreadySaidClosing = /thanks for (calling|your time)|good (rest|day)|have a (great|good|wonderful|nice)|goodbye|take care|bye now/i.test(lastAssistantTranscript);
+    if (!alreadySaidClosing) {
+      openai?.triggerResponse({
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: getClosingInstruction(reason),
+              },
+            ],
+          },
+        ],
+        output_modalities: ["audio"],
+        instructions:
+          "Say one brief closing in en-US, thank the caller, and wish them a good rest of their day. Do not ask another question.",
+      });
+    }
     scheduleBrowserEndCall(reason, BROWSER_END_CALL_FALLBACK_MS);
   }
 
   function maybeCompleteBrowserPendingEndCall(reason: string): void {
-    if (!pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
+    if (browserCallSession.lifecycleState === "ended" || !pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
     setTimeout(() => {
-      if (!pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
+      if (browserCallSession.lifecycleState === "ended" || !pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
       void completeBrowserEndCall(reason);
     }, 700);
   }
@@ -2575,6 +2617,17 @@ ${startupRetailContext}`;
       Math.min(Math.round(playbackElapsedMs), Math.round(currentAssistantAudioSentMs))
     );
     openai?.truncateResponse(currentAssistantItemId, audioEndMs);
+  }
+
+  function sendBrowserCallStateChanged(change: ReturnType<CallSession["activate"]>): void {
+    if (!change) return;
+    sendEvent({
+      type: "callStateChanged",
+      state: change.state,
+      previousState: change.previousState,
+      reason: change.reason,
+      timestamp: change.timestamp,
+    });
   }
 
   function sendEvent(event: object): void {
