@@ -4,7 +4,7 @@ import {
   reviewEnglishUserTranscript,
   shouldSuppressBrowserUserTranscript,
   shouldSuppressTwilioUserTranscript,
-} from "./index";
+} from "../../../server/voice-agent/index";
 
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalFetch = globalThis.fetch;
@@ -16,7 +16,7 @@ try {
 
   const failedCorrectionResult = await reviewEnglishUserTranscript("Palo Alto", {
     agentName: "Store Assistant",
-    lastAssistantTranscript: "Which store would you like to pick up from, San Jose, Palo Alto, or Fremont?",
+    lastAssistantTranscript: "The iPad mini is available at our Palo Alto store. I can have it ready for pickup tomorrow at 2 PM. Would that work?",
   });
 
   assert.deepEqual(failedCorrectionResult, {
@@ -43,6 +43,16 @@ try {
   assert.deepEqual(localSuppressionResult, {
     action: "suppress",
     text: "",
+  });
+
+  const correctedNameResult = await reviewEnglishUserTranscript("Myata Abdulrahman.", {
+    agentName: "Store Assistant",
+    lastAssistantTranscript: "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?",
+  });
+
+  assert.deepEqual(correctedNameResult, {
+    action: "replace",
+    text: "Mayada Abdelrahman",
   });
 
   Date.now = () => 100_000;
@@ -91,6 +101,18 @@ try {
   });
   assert.equal(twilioGreetingSuppressed, true);
   assert.equal(browserGreetingSuppressed, twilioGreetingSuppressed);
+
+  const browserBiasedProductSuppressed = shouldSuppressBrowserUserTranscript(
+    "Do you have the Bose QuietComfort 45 in stock?",
+    {
+      lastAssistantAudioAt: 99_900,
+      lastAssistantDoneAt: 99_900,
+      lastAssistantTranscript: "The Samsung Galaxy S25+ is available at our Palo Alto store.",
+      browserPlaybackActive: true,
+      responseActive: false,
+    }
+  );
+  assert.equal(browserBiasedProductSuppressed, true);
 } finally {
   if (originalApiKey === undefined) {
     delete process.env.OPENAI_API_KEY;
