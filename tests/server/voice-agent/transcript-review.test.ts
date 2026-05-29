@@ -90,6 +90,38 @@ try {
   assert.equal(twilioShortAnswerSuppressed, false);
   assert.equal(browserShortAnswerSuppressed, twilioShortAnswerSuppressed);
 
+  const twilioNameConfirmationAccepted = shouldSuppressTwilioUserTranscript("Mayada Abdelrahman", {
+    lastAssistantAudioAt: 99_900,
+    lastAssistantDoneAt: 99_900,
+    lastAssistantTranscript: "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?",
+    twilioResponseActive: false,
+  });
+  const browserNameConfirmationAccepted = shouldSuppressBrowserUserTranscript("Mayada Abdelrahman", {
+    lastAssistantAudioAt: 99_900,
+    lastAssistantDoneAt: 99_900,
+    lastAssistantTranscript: "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?",
+    browserPlaybackActive: false,
+    responseActive: false,
+  });
+  assert.equal(twilioNameConfirmationAccepted, false);
+  assert.equal(browserNameConfirmationAccepted, false);
+
+  const twilioFinalCheckInAccepted = shouldSuppressTwilioUserTranscript("I'm good", {
+    lastAssistantAudioAt: 99_900,
+    lastAssistantDoneAt: 99_900,
+    lastAssistantTranscript: "Is there anything else I can help with?",
+    twilioResponseActive: false,
+  });
+  const browserFinalCheckInAccepted = shouldSuppressBrowserUserTranscript("I'm good", {
+    lastAssistantAudioAt: 99_900,
+    lastAssistantDoneAt: 99_900,
+    lastAssistantTranscript: "Is there anything else I can help with?",
+    browserPlaybackActive: false,
+    responseActive: false,
+  });
+  assert.equal(twilioFinalCheckInAccepted, false);
+  assert.equal(browserFinalCheckInAccepted, false);
+
   const twilioGreetingSuppressed = shouldSuppressTwilioUserTranscript("hello", {
     ...assistantContext,
     twilioResponseActive: true,

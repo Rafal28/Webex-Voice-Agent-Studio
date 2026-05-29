@@ -80,14 +80,18 @@ import {
   RETAIL_VOICE_PRODUCT_TERMS,
   TRANSCRIPT_CORRECTION_MODEL,
   TWILIO_ASSISTANT_ECHO_MATCH_MS,
+  TWILIO_BARGE_IN_SPEECH_START_GUARD_MS,
   TWILIO_END_CALL_FALLBACK_MS,
   TWILIO_END_CALL_MAX_WAIT_MS,
   TWILIO_TRANSCRIPT_ECHO_GUARD_MS,
   VOICE_PROVISIONAL_BARGE_IN_RELEASE_MS,
 } from "./runtime_constants";
 import {
+  classifyAddOnOfferAnswer,
+  classifyFinalCheckInAnswer,
+  isAssistantAddOnOfferTranscript,
   isAssistantWaitingForCallerAnswerTranscript,
-  isAnythingElseCheckInTranscript,
+  isStandaloneFinalCheckInTranscript,
   isIncompleteUserRequestTranscript,
 } from "./answer-intent";
 import {
@@ -110,6 +114,160 @@ function normalizeIntentText(text: string): string {
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
+}
+
+type VoiceLogChannel = "PSTN" | "Browser";
+type VoiceLogSpeaker = "User" | "Agent" | "Suppressed";
+
+function compactJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return JSON.stringify({ unserializable: true });
+  }
+}
+
+function logChannelBoundary(channel: VoiceLogChannel, phase: "Start" | "End", meta: Record<string, unknown> = {}): void {
+  console.log(`${"=".repeat(20)} ${channel} ${phase} ${"=".repeat(20)} ${compactJson(meta)}`);
+}
+
+function logTranscriptLine(
+  channel: VoiceLogChannel,
+  speaker: VoiceLogSpeaker,
+  text: string,
+  meta: Record<string, unknown> = {}
+): void {
+  console.log(`[Transcript][${speaker}][${channel}] ${compactJson({ text, ...meta })}`);
+}
+
+function logToolLine(
+  kind: "Tool" | "ToolResult",
+  channel: VoiceLogChannel,
+  toolName: string,
+  payload: Record<string, unknown>
+): void {
+  console.log(`[${kind}][${channel}] ${compactJson({ toolName, ...payload })}`);
+}
+
+function getCatalogProductName(text: string): string {
+  const normalized = normalizeIntentText(text);
+  if (!normalized) return "";
+
+  const matches = RETAIL_STORE_ASSISTANT_USE_CASE.inventory
+    .map((item) => item.name)
+    .filter((name) => {
+      const product = normalizeIntentText(name);
+      if (!product) return false;
+      if (normalized === product || normalized.includes(product)) return true;
+      const inputTokens = new Set(normalized.split(/\s+/).filter(Boolean));
+      const productTokens = product.split(/\s+/).filter((token) => token.length > 1);
+      const importantTokens = productTokens.filter((token) => !RETAIL_VOICE_PRODUCT_TERMS.has(token));
+      if (importantTokens.length === 0) return false;
+      return importantTokens.every((token) => inputTokens.has(token));
+    })
+    .sort((a, b) => normalizeIntentText(b).length - normalizeIntentText(a).length);
+
+  return matches[0] || "";
+}
+
+function getToolProductName(args: Record<string, any>): string {
+  return String(args.product || args.item || args.name || args.query || "").trim();
+}
+
+function getInventoryRecommendationName(result: ToolExecutionResult): string {
+  const data = result.data && typeof result.data === "object" ? result.data as Record<string, any> : {};
+  return String(data.recommendation?.name || data.item?.name || data.product || "").trim();
+}
+
+function resolvePrimaryProductName(text: string): string {
+  return getCatalogProductName(text) || text.trim();
+}
+
+function productsReferToSameCatalogItem(a: string, b: string): boolean {
+  const catalogA = getCatalogProductName(a);
+  const catalogB = getCatalogProductName(b);
+  if (catalogA && catalogB) return catalogA === catalogB;
+  const normalizedA = normalizeIntentText(a);
+  const normalizedB = normalizeIntentText(b);
+  if (catalogA || catalogB) {
+    const catalog = normalizeIntentText(catalogA || catalogB);
+    const other = catalogA ? normalizedB : normalizedA;
+    const otherTokens = other.split(/\s+/).filter(Boolean);
+    const catalogTokens = new Set(catalog.split(/\s+/).filter(Boolean));
+    if (otherTokens.length > 0 && otherTokens.every((token) => catalogTokens.has(token))) return true;
+  }
+  return Boolean(normalizedA && normalizedB && normalizedA === normalizedB);
+}
+
+function getReservationGuardFailure(
+  args: Record<string, any>,
+  context: {
+    latestInventoryProduct: string;
+    latestInventoryItemName: string;
+    latestReservation: RetailReservationDetails | null;
+  }
+): ToolExecutionResult | null {
+  const requestedProduct = getToolProductName(args);
+  const inventoryTarget = context.latestInventoryItemName || context.latestInventoryProduct;
+  if (!requestedProduct || !inventoryTarget) return null;
+
+  if (!productsReferToSameCatalogItem(requestedProduct, inventoryTarget)) {
+    const message =
+      `Reservation blocked because "${requestedProduct}" does not match the latest successful inventory lookup target "${inventoryTarget}". Continue with the active requested product unless the caller explicitly changes products.`;
+    return {
+      success: false,
+      error: message,
+      result: message,
+      data: {
+        requestedProduct,
+        latestInventoryProduct: inventoryTarget,
+        requiresExplicitProductChange: true,
+      },
+    };
+  }
+
+  if (
+    context.latestReservation &&
+    !productsReferToSameCatalogItem(requestedProduct, context.latestReservation.itemName)
+  ) {
+    const message =
+      `Reservation blocked because the main reservation is already for "${context.latestReservation.itemName}". Treat add-ons separately and do not replace the primary reserved item.`;
+    return {
+      success: false,
+      error: message,
+      result: message,
+      data: {
+        requestedProduct,
+        reservedItem: context.latestReservation.itemName,
+        requiresSeparateAddOnFlow: true,
+      },
+    };
+  }
+
+  return null;
+}
+
+function getInventoryLookupGuardFailure(
+  args: Record<string, any>,
+  activeRequestedProduct: string
+): ToolExecutionResult | null {
+  const requestedProduct = getToolProductName(args);
+  const activeCatalogProduct = getCatalogProductName(activeRequestedProduct);
+  if (!requestedProduct || !activeCatalogProduct) return null;
+  if (productsReferToSameCatalogItem(requestedProduct, activeCatalogProduct)) return null;
+
+  const message =
+    `Inventory lookup blocked because "${requestedProduct}" does not match the active caller request "${activeCatalogProduct}". Continue with the accepted intent unless the caller explicitly changes products.`;
+  return {
+    success: false,
+    error: message,
+    result: message,
+    data: {
+      requestedProduct,
+      activeRequestedProduct: activeCatalogProduct,
+      requiresExplicitProductChange: true,
+    },
+  };
 }
 
 function getReservationDetails(data: unknown): RetailReservationDetails | null {
@@ -373,6 +531,39 @@ function isImmediateBargeInTranscript(text: string): boolean {
   if (!normalized) return false;
   if (isEndCallIntent(normalized)) return true;
   return /^(yes|yeah|yep|no|nope|nah|ok|okay|sure|stop|wait|hold on|hang on|one sec|one second|actually|no wait|repeat that|can you repeat|sorry|sorry what|what)$/.test(normalized);
+}
+
+function isLikelyProfileNameAnswer(text: string, lastAssistantTranscript: string): boolean {
+  if (!isProfileNameConfirmationTurn(lastAssistantTranscript)) return false;
+  const corrected = applyDemoNameTranscriptCorrection(text, lastAssistantTranscript);
+  const normalized = normalizeIntentText(corrected);
+  if (!normalized) return false;
+
+  const profile = getDemoCustomerProfile();
+  const firstName = normalizeIntentText(profile.firstName);
+  const lastName = normalizeIntentText(profile.lastName);
+  const fullName = normalizeIntentText(profile.name);
+  if (normalized === firstName || normalized === lastName || normalized === fullName) return true;
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length < 1 || words.length > 4) return false;
+  if (isBriefButValidTranscript(normalized) || isEndCallIntent(normalized)) return false;
+  return words.every((word) => /^[a-z][a-z'-]{1,}$/i.test(word));
+}
+
+function isProtectedAnswerTranscript(text: string, lastAssistantTranscript: string): boolean {
+  const normalized = normalizeIntentText(text);
+  if (!normalized) return false;
+
+  if (isLikelyProfileNameAnswer(normalized, lastAssistantTranscript)) return true;
+  if (isAssistantAddOnOfferTranscript(lastAssistantTranscript)) {
+    return classifyAddOnOfferAnswer(normalized) !== "unknown";
+  }
+  if (isStandaloneFinalCheckInTranscript(lastAssistantTranscript)) {
+    return classifyFinalCheckInAnswer(normalized) !== "unknown" || isEndCallIntent(normalized);
+  }
+
+  return false;
 }
 
 function hasEnoughTranscriptForProvisionalBargeIn(text: string, options?: { allowBriefValid?: boolean }): boolean {
@@ -683,6 +874,7 @@ export function shouldSuppressTwilioUserTranscript(
 ): boolean {
   const normalized = normalizeTranscript(text);
   if (!normalized) return true;
+  if (isProtectedAnswerTranscript(normalized, context.lastAssistantTranscript)) return false;
 
   const now = Date.now();
   const recentAssistant =
@@ -829,6 +1021,10 @@ function handleTwilioSession(ws: WebSocket): void {
   let latestReservation: RetailReservationDetails | null = null;
   let latestRecommendedUpsell = "";
   let inventoryLookupSucceeded = false;
+  let twilioAcceptedInitialIntent = "";
+  let twilioActiveRequestedProduct = "";
+  let twilioLatestInventoryProduct = "";
+  let twilioLatestInventoryItemName = "";
   let startupRetailContext = "";
   let twilioResponseActive = false;
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
@@ -851,6 +1047,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let twilioEndCallFallbackStartedAt: number | null = null;
   let provisionalTwilioBargeInActive = false;
   let provisionalTwilioBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  let twilioSpeechStartBargeInTimer: ReturnType<typeof setTimeout> | null = null;
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -865,6 +1062,7 @@ function handleTwilioSession(ws: WebSocket): void {
         callStartedAt = Date.now();
         callSid = msg.start.callSid;
         activeCallSid = typeof callSid === "string" ? callSid : null;
+        logChannelBoundary("PSTN", "Start", { callSid, streamSid, agentId });
 
         let instructions = "";
         let voice = "marin";
@@ -895,6 +1093,12 @@ function handleTwilioSession(ws: WebSocket): void {
           : "Unknown";
         latestReservation = null;
         latestRecommendedUpsell = "";
+        inventoryLookupSucceeded = false;
+        twilioAcceptedInitialIntent = "";
+        twilioActiveRequestedProduct = "";
+        twilioLatestInventoryProduct = "";
+        twilioLatestInventoryItemName = "";
+        clearTwilioSpeechStartBargeInTimer();
         const smsRecipientPhone = resolveDemoSmsRecipientPhone(callerPhone);
         const canSendCallerSummarySms = canSendCallSummarySms(callerPhone);
 
@@ -980,6 +1184,7 @@ function handleTwilioSession(ws: WebSocket): void {
               itemId: pendingTwilioUserSpeechItemId,
               audioStartMs: pendingTwilioUserSpeechAudioStartMs,
             });
+            scheduleTwilioSpeechStartBargeIn();
           }
         });
 
@@ -994,11 +1199,10 @@ function handleTwilioSession(ws: WebSocket): void {
         });
 
         const handleTwilioUserTranscript = async (text: string): Promise<void> => {
-          console.log(`[VoiceAgent/Twilio] User: ${text}`);
           const trimmed = text.trim();
           if (!trimmed) return;
           if (isIncompleteUserRequestTranscript(trimmed)) {
-            console.warn(`[VoiceAgent/Twilio] Suppressed incomplete user request fragment: ${trimmed}`);
+            logTranscriptLine("PSTN", "Suppressed", trimmed, { reason: "incomplete_user_request", callSid });
             releaseProvisionalTwilioBargeIn();
             clearPendingTwilioUserSpeechCandidate();
             return;
@@ -1011,7 +1215,7 @@ function handleTwilioSession(ws: WebSocket): void {
               twilioResponseActive,
             })
           ) {
-            console.warn(`[VoiceAgent/Twilio] Suppressed likely phone-speaker echo transcript: ${trimmed}`);
+            logTranscriptLine("PSTN", "Suppressed", trimmed, { reason: "assistant_echo_or_overlap", callSid });
             releaseProvisionalTwilioBargeIn();
             clearPendingTwilioUserSpeechCandidate();
             return;
@@ -1023,7 +1227,7 @@ function handleTwilioSession(ws: WebSocket): void {
             lastUserTranscript,
           });
           if (reviewed.action === "suppress") {
-            console.warn(`[VoiceAgent/Twilio] Suppressed suspicious user transcript: ${trimmed}`);
+            logTranscriptLine("PSTN", "Suppressed", trimmed, { reason: "transcript_review", callSid });
             releaseProvisionalTwilioBargeIn();
             clearPendingTwilioUserSpeechCandidate();
             return;
@@ -1033,6 +1237,15 @@ function handleTwilioSession(ws: WebSocket): void {
           }
 
           lastUserTranscript = reviewed.text;
+          const spokenProduct = getCatalogProductName(reviewed.text);
+          if (spokenProduct && !twilioPendingAddOnOffer && !latestReservation) {
+            twilioActiveRequestedProduct = spokenProduct;
+          }
+          logTranscriptLine("PSTN", "User", reviewed.text, {
+            rawText: reviewed.action === "replace" ? trimmed : undefined,
+            corrected: reviewed.action === "replace" || undefined,
+            callSid,
+          });
           transcriptEntries.push({
             role: "Customer",
             text: reviewed.text,
@@ -1106,7 +1319,6 @@ function handleTwilioSession(ws: WebSocket): void {
         });
 
         openai.on("assistantTranscriptDone", (text: string) => {
-          console.log(`[VoiceAgent/Twilio] Agent: ${text}`);
           const trimmed = text.trim();
           if (suppressAssistantOutput) {
             console.warn(`[VoiceAgent/Twilio] Suppressed assistant output after prior response cancellation: ${trimmed}`);
@@ -1121,6 +1333,7 @@ function handleTwilioSession(ws: WebSocket): void {
             assistantTurnCount++;
             lastAssistantDoneAt = Date.now();
             lastAssistantTranscript = trimmed;
+            logTranscriptLine("PSTN", "Agent", trimmed, { callSid });
             transcriptEntries.push({
               role: "Assistant",
               text: trimmed,
@@ -1156,14 +1369,19 @@ function handleTwilioSession(ws: WebSocket): void {
 
         openai.on("functionCall", async ({ callId, name, arguments: argsString }) => {
           clearTwilioIdleFollowUp();
-          console.log(`[VoiceAgent/Twilio] Function call: ${name}`);
           try {
             const args = JSON.parse(argsString);
+            logToolLine("Tool", "PSTN", name, {
+              args,
+              callSid,
+              acceptedInitialIntent: twilioAcceptedInitialIntent || undefined,
+              activeRequestedProduct: twilioActiveRequestedProduct || undefined,
+            });
             if (name === voiceEndCallTool.name) {
               const reason = String(args.reason || "Caller asked to end the call");
               if (hasActiveShoppingIntent(lastUserTranscript)) {
                 const rejectedResult = createRejectedEndCallResult(reason, lastUserTranscript);
-                console.warn(`[VoiceAgent/Twilio] Rejected premature end-call request:`, rejectedResult);
+                logToolLine("ToolResult", "PSTN", voiceEndCallTool.name, { ...rejectedResult, callSid });
                 sendTwilioMonitorEvent(monitorAgentId, {
                   type: "toolCallStarted",
                   agentId: monitorAgentId,
@@ -1189,7 +1407,7 @@ function handleTwilioSession(ws: WebSocket): void {
                 !canEndCallFromUserTranscript(lastUserTranscript, lastAssistantTranscript, twilioFinalCheckInAsked)
               ) {
                 const rejectedResult = createNeedsCheckInEndCallResult(reason, lastUserTranscript);
-                console.warn(`[VoiceAgent/Twilio] Rejected end-call before final check-in:`, rejectedResult);
+                logToolLine("ToolResult", "PSTN", voiceEndCallTool.name, { ...rejectedResult, callSid });
                 sendTwilioMonitorEvent(monitorAgentId, {
                   type: "toolCallStarted",
                   agentId: monitorAgentId,
@@ -1212,7 +1430,7 @@ function handleTwilioSession(ws: WebSocket): void {
                 return;
               }
               const result = createEndCallResult(reason);
-              console.log(`[VoiceAgent/Twilio] Function result:`, result);
+              logToolLine("ToolResult", "PSTN", voiceEndCallTool.name, { ...result, callSid });
               sendTwilioFunctionOutput(callId, JSON.stringify(result), false);
               requestTwilioGracefulEndCall(reason, "tool");
               return;
@@ -1225,7 +1443,20 @@ function handleTwilioSession(ws: WebSocket): void {
               args,
               timestamp: Date.now(),
             });
-            const rawResult = name === "retail_reserve_item" && !inventoryLookupSucceeded
+            const inventoryGuardFailure = name === "retail_lookup_inventory" && !latestReservation
+              ? getInventoryLookupGuardFailure(args, twilioActiveRequestedProduct)
+              : null;
+            const reservationGuardFailure = name === "retail_reserve_item"
+              ? getReservationGuardFailure(args, {
+                  latestInventoryProduct: twilioLatestInventoryProduct,
+                  latestInventoryItemName: twilioLatestInventoryItemName,
+                  latestReservation,
+                })
+              : null;
+            const guardFailure = inventoryGuardFailure || reservationGuardFailure;
+            const rawResult = guardFailure
+              ? guardFailure
+              : name === "retail_reserve_item" && !inventoryLookupSucceeded
               ? {
                   success: false,
                   error: "Call retail_lookup_inventory successfully before creating a reservation.",
@@ -1242,6 +1473,11 @@ function handleTwilioSession(ws: WebSocket): void {
               : rawResult;
             if (result.success && name === "retail_lookup_inventory") {
               inventoryLookupSucceeded = true;
+              twilioLatestInventoryProduct = getToolProductName(args);
+              twilioLatestInventoryItemName = getInventoryRecommendationName(result) || twilioLatestInventoryProduct;
+              if (!latestReservation) {
+                twilioActiveRequestedProduct = resolvePrimaryProductName(twilioLatestInventoryItemName || twilioLatestInventoryProduct);
+              }
               twilioPendingPickupProposal = true;
             }
             if (result.success && name === "retail_reserve_item") {
@@ -1254,7 +1490,9 @@ function handleTwilioSession(ws: WebSocket): void {
             let bundledProfileHistoryResult: ToolExecutionResult | null = null;
             let bundledProfileContextResult: ToolExecutionResult | null = null;
             if (result.success && name === "retail_confirm_profile") {
-              const bundled = await addProfileContextBundle(result, args);
+              const bundled = await addProfileContextBundle(result, args, {
+                acceptedInitialIntent: twilioAcceptedInitialIntent,
+              });
               result = bundled.result;
               bundledProfileHistoryResult = bundled.historyResult;
               bundledProfileContextResult = bundled.contextResult;
@@ -1375,7 +1613,14 @@ function handleTwilioSession(ws: WebSocket): void {
                 };
               }
             }
-            console.log(`[VoiceAgent/Twilio] Function result:`, result);
+            logToolLine("ToolResult", "PSTN", name, {
+              success: result.success,
+              result: result.result,
+              error: result.error,
+              data: result.data,
+              durationMs: result.durationMs,
+              callSid,
+            });
             if (pendingEndCall || endingCall || suppressAssistantOutput) {
               console.warn(`[VoiceAgent/Twilio] Skipping stale function output for ${name}`);
               return;
@@ -1456,6 +1701,7 @@ function handleTwilioSession(ws: WebSocket): void {
         break;
       case "stop":
         clearTwilioUserTurnResponseWatchdog();
+        clearTwilioSpeechStartBargeInTimer();
         openai?.close();
         sendCallEnded();
         break;
@@ -1466,6 +1712,7 @@ function handleTwilioSession(ws: WebSocket): void {
     clearTwilioIdleFollowUp();
     clearTwilioUserTurnResponseWatchdog();
     clearProvisionalTwilioBargeInRelease();
+    clearTwilioSpeechStartBargeInTimer();
     openai?.close();
     sendCallEnded();
   });
@@ -1474,6 +1721,7 @@ function handleTwilioSession(ws: WebSocket): void {
     if (callEndedSent) return;
     callEndedSent = true;
     const endedAt = Date.now();
+    logChannelBoundary("PSTN", "End", { callSid, streamSid, durationMs: callStartedAt ? endedAt - callStartedAt : undefined });
     void (async () => {
       await sendOrderConfirmation();
       await sendStoreManagerSummary(endedAt);
@@ -1819,6 +2067,13 @@ function handleTwilioSession(ws: WebSocket): void {
     }
   }
 
+  function clearTwilioSpeechStartBargeInTimer(): void {
+    if (twilioSpeechStartBargeInTimer) {
+      clearTimeout(twilioSpeechStartBargeInTimer);
+      twilioSpeechStartBargeInTimer = null;
+    }
+  }
+
   function releaseProvisionalTwilioBargeIn(): void {
     clearProvisionalTwilioBargeInRelease();
     if (!provisionalTwilioBargeInActive) return;
@@ -1827,10 +2082,21 @@ function handleTwilioSession(ws: WebSocket): void {
   }
 
   function clearPendingTwilioUserSpeechCandidate(): void {
+    clearTwilioSpeechStartBargeInTimer();
     pendingTwilioUserSpeechStartedAt = null;
     pendingTwilioUserSpeechAudioStartMs = null;
     pendingTwilioUserSpeechItemId = null;
     twilioTranscriptPreview = "";
+  }
+
+  function scheduleTwilioSpeechStartBargeIn(): void {
+    clearTwilioSpeechStartBargeInTimer();
+    twilioSpeechStartBargeInTimer = setTimeout(() => {
+      twilioSpeechStartBargeInTimer = null;
+      if (!pendingTwilioUserSpeechStartedAt) return;
+      if (!hasActiveTwilioAssistantPlayback()) return;
+      provisionallyCutTwilioAssistantPlayback();
+    }, TWILIO_BARGE_IN_SPEECH_START_GUARD_MS);
   }
 
   function maybeProvisionallyCutTwilioAssistantPlaybackFromTranscript(text: string): void {
@@ -1884,7 +2150,7 @@ function handleTwilioSession(ws: WebSocket): void {
     if (lastItemId && audioEndMs < Math.round(currentTwilioAudioSentMs) - 20) {
       openai?.truncateResponse(lastItemId, audioEndMs);
     }
-    if (streamSid && ws.readyState === WebSocket.OPEN && markQueue.length > 0) {
+    if (streamSid && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ event: "clear", streamSid }));
     }
 
@@ -2021,6 +2287,8 @@ function handleTwilioSession(ws: WebSocket): void {
   function requestTwilioProfileConfirmation(initialIntent: string): void {
     if (!openai || endingCall || pendingEndCall || twilioProfileConfirmationAsked || twilioProfileConfirmed) return;
     clearTwilioIdleFollowUp();
+    twilioAcceptedInitialIntent = initialIntent.trim();
+    twilioActiveRequestedProduct = resolvePrimaryProductName(twilioAcceptedInitialIntent);
     twilioProfileConfirmationAsked = true;
     openai.triggerResponse({
       input: [
@@ -2082,6 +2350,7 @@ function handleTwilioSession(ws: WebSocket): void {
     if (pendingEndCall || endingCall) return;
     clearTwilioIdleFollowUp();
     pendingEndCall = true;
+    logToolLine("Tool", "PSTN", voiceEndCallTool.name, { args: { reason, source }, callSid });
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallStarted",
       agentId: monitorAgentId,
@@ -2097,6 +2366,12 @@ function handleTwilioSession(ws: WebSocket): void {
       result: createEndCallResult(reason).result,
       data: { reason },
       timestamp: Date.now(),
+    });
+    logToolLine("ToolResult", "PSTN", voiceEndCallTool.name, {
+      success: true,
+      result: createEndCallResult(reason).result,
+      data: { reason },
+      callSid,
     });
     const alreadySaidClosing = isAssistantClosingTranscript(lastAssistantTranscript);
     if (!alreadySaidClosing) {
@@ -2133,6 +2408,7 @@ function handleTwilioSession(ws: WebSocket): void {
 
   async function runStartupRetailProfileLookup(): Promise<string> {
     const lookupArgs = callerPhone !== "Unknown" ? { phone: callerPhone } : {};
+    logToolLine("Tool", "PSTN", "retail_profile_lookup", { args: lookupArgs, callSid });
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallStarted",
       agentId: monitorAgentId,
@@ -2141,6 +2417,14 @@ function handleTwilioSession(ws: WebSocket): void {
       timestamp: Date.now(),
     });
     const profileLookup = await executeTool("retail_profile_lookup", lookupArgs);
+    logToolLine("ToolResult", "PSTN", "retail_profile_lookup", {
+      success: profileLookup.success,
+      result: profileLookup.result,
+      error: profileLookup.error,
+      data: profileLookup.data,
+      durationMs: profileLookup.durationMs,
+      callSid,
+    });
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
@@ -2202,6 +2486,10 @@ function handleBrowserSession(ws: WebSocket): void {
   let browserProfileConfirmationAsked = false;
   let browserProfileConfirmed = false;
   let browserAcceptedInitialIntent = "";
+  let browserActiveRequestedProduct = "";
+  let browserLatestInventoryProduct = "";
+  let browserLatestInventoryItemName = "";
+  let browserSessionId = "";
   let browserFinalCheckInAsked = false;
   let browserPendingAddOnOffer = false;
   let browserPendingPickupProposal = false;
@@ -2232,10 +2520,13 @@ function handleBrowserSession(ws: WebSocket): void {
         lastAssistantTranscript = "";
         lastUserTranscript = "";
         browserCallStartedAt = Date.now();
+        browserSessionId = `browser-${browserCallStartedAt}`;
+        logChannelBoundary("Browser", "Start", { sessionId: browserSessionId, agentId });
         browserInputEnabled = false;
         browserCallEndedSent = false;
         latestReservation = null;
         latestRecommendedUpsell = "";
+        inventoryLookupSucceeded = false;
         startupRetailContext = "";
         idleFollowUpSent = false;
         assistantTurnCount = 0;
@@ -2250,6 +2541,9 @@ function handleBrowserSession(ws: WebSocket): void {
         browserProfileConfirmationAsked = false;
         browserProfileConfirmed = false;
         browserAcceptedInitialIntent = "";
+        browserActiveRequestedProduct = "";
+        browserLatestInventoryProduct = "";
+        browserLatestInventoryItemName = "";
         browserFinalCheckInAsked = false;
         browserPendingAddOnOffer = false;
         browserPendingPickupProposal = false;
@@ -2355,7 +2649,10 @@ function handleBrowserSession(ws: WebSocket): void {
           const trimmed = text.trim();
           if (!trimmed) return;
           if (isIncompleteUserRequestTranscript(trimmed)) {
-            console.warn(`[VoiceAgent/Browser] Suppressed incomplete user request fragment: ${trimmed}`);
+            logTranscriptLine("Browser", "Suppressed", trimmed, {
+              reason: "incomplete_user_request",
+              sessionId: browserSessionId,
+            });
             releaseProvisionalBrowserBargeIn();
             clearPendingBrowserUserSpeechCandidate();
             browserUserSpeechUiActive = false;
@@ -2372,6 +2669,10 @@ function handleBrowserSession(ws: WebSocket): void {
               responseActive,
             })
           ) {
+            logTranscriptLine("Browser", "Suppressed", trimmed, {
+              reason: "assistant_echo_or_overlap",
+              sessionId: browserSessionId,
+            });
             releaseProvisionalBrowserBargeIn();
             clearPendingBrowserUserSpeechCandidate();
             browserUserSpeechUiActive = false;
@@ -2386,7 +2687,10 @@ function handleBrowserSession(ws: WebSocket): void {
             lastUserTranscript,
           });
           if (reviewed.action === "suppress") {
-            console.warn(`[VoiceAgent/Browser] Suppressed suspicious user transcript: ${trimmed}`);
+            logTranscriptLine("Browser", "Suppressed", trimmed, {
+              reason: "transcript_review",
+              sessionId: browserSessionId,
+            });
             releaseProvisionalBrowserBargeIn();
             clearPendingBrowserUserSpeechCandidate();
             browserUserSpeechUiActive = false;
@@ -2399,6 +2703,15 @@ function handleBrowserSession(ws: WebSocket): void {
           }
 
           lastUserTranscript = reviewed.text;
+          const spokenProduct = getCatalogProductName(reviewed.text);
+          if (spokenProduct && !browserPendingAddOnOffer && !latestReservation) {
+            browserActiveRequestedProduct = spokenProduct;
+          }
+          logTranscriptLine("Browser", "User", reviewed.text, {
+            rawText: reviewed.action === "replace" ? trimmed : undefined,
+            corrected: reviewed.action === "replace" || undefined,
+            sessionId: browserSessionId,
+          });
           transcriptEntries.push({
             role: "Customer",
             text: reviewed.text,
@@ -2496,6 +2809,7 @@ function handleBrowserSession(ws: WebSocket): void {
           lastAssistantDoneAt = Date.now();
           assistantTurnCount++;
           lastAssistantTranscript = trimmed;
+          logTranscriptLine("Browser", "Agent", trimmed, { sessionId: browserSessionId });
           transcriptEntries.push({
             role: "Assistant",
             text: trimmed,
@@ -2586,14 +2900,22 @@ function handleBrowserSession(ws: WebSocket): void {
 
         openai.on("functionCall", async ({ callId, name, arguments: argsString }) => {
           clearBrowserIdleFollowUp();
-          console.log(`[VoiceAgent/Browser] Function call: ${name}`);
           try {
             const args = JSON.parse(argsString);
+            logToolLine("Tool", "Browser", name, {
+              args,
+              sessionId: browserSessionId,
+              acceptedInitialIntent: browserAcceptedInitialIntent || undefined,
+              activeRequestedProduct: browserActiveRequestedProduct || undefined,
+            });
             if (name === voiceEndCallTool.name) {
               const reason = String(args.reason || "User asked to end the call");
               if (hasActiveShoppingIntent(lastUserTranscript)) {
                 const rejectedResult = createRejectedEndCallResult(reason, lastUserTranscript);
-                console.warn(`[VoiceAgent/Browser] Rejected premature end-call request:`, rejectedResult);
+                logToolLine("ToolResult", "Browser", voiceEndCallTool.name, {
+                  ...rejectedResult,
+                  sessionId: browserSessionId,
+                });
                 sendEvent({
                   type: "toolCallStarted",
                   toolName: voiceEndCallTool.name,
@@ -2617,7 +2939,10 @@ function handleBrowserSession(ws: WebSocket): void {
                 !canEndCallFromUserTranscript(lastUserTranscript, lastAssistantTranscript, browserFinalCheckInAsked)
               ) {
                 const rejectedResult = createNeedsCheckInEndCallResult(reason, lastUserTranscript);
-                console.warn(`[VoiceAgent/Browser] Rejected end-call before final check-in:`, rejectedResult);
+                logToolLine("ToolResult", "Browser", voiceEndCallTool.name, {
+                  ...rejectedResult,
+                  sessionId: browserSessionId,
+                });
                 sendEvent({
                   type: "toolCallStarted",
                   toolName: voiceEndCallTool.name,
@@ -2638,7 +2963,10 @@ function handleBrowserSession(ws: WebSocket): void {
                 return;
               }
               const result = createEndCallResult(reason);
-              console.log(`[VoiceAgent/Browser] Function result:`, result);
+              logToolLine("ToolResult", "Browser", voiceEndCallTool.name, {
+                ...result,
+                sessionId: browserSessionId,
+              });
               sendBrowserFunctionOutput(callId, JSON.stringify(result), false);
               requestBrowserGracefulEndCall(reason, "tool");
               return;
@@ -2650,7 +2978,20 @@ function handleBrowserSession(ws: WebSocket): void {
               args,
               timestamp: Date.now(),
             });
-            const rawResult = name === "retail_reserve_item" && !inventoryLookupSucceeded
+            const inventoryGuardFailure = name === "retail_lookup_inventory" && !latestReservation
+              ? getInventoryLookupGuardFailure(args, browserActiveRequestedProduct)
+              : null;
+            const reservationGuardFailure = name === "retail_reserve_item"
+              ? getReservationGuardFailure(args, {
+                  latestInventoryProduct: browserLatestInventoryProduct,
+                  latestInventoryItemName: browserLatestInventoryItemName,
+                  latestReservation,
+                })
+              : null;
+            const guardFailure = inventoryGuardFailure || reservationGuardFailure;
+            const rawResult = guardFailure
+              ? guardFailure
+              : name === "retail_reserve_item" && !inventoryLookupSucceeded
               ? {
                   success: false,
                   error: "Call retail_lookup_inventory successfully before creating a reservation.",
@@ -2681,6 +3022,11 @@ function handleBrowserSession(ws: WebSocket): void {
             }
             if (result.success && name === "retail_lookup_inventory") {
               inventoryLookupSucceeded = true;
+              browserLatestInventoryProduct = getToolProductName(args);
+              browserLatestInventoryItemName = getInventoryRecommendationName(result) || browserLatestInventoryProduct;
+              if (!latestReservation) {
+                browserActiveRequestedProduct = resolvePrimaryProductName(browserLatestInventoryItemName || browserLatestInventoryProduct);
+              }
               browserPendingPickupProposal = true;
             }
             if (result.success && name === "retail_reserve_item") {
@@ -2800,7 +3146,14 @@ function handleBrowserSession(ws: WebSocket): void {
                 };
               }
             }
-            console.log(`[VoiceAgent/Browser] Function result:`, result);
+            logToolLine("ToolResult", "Browser", name, {
+              success: result.success,
+              result: result.result,
+              error: result.error,
+              data: result.data,
+              durationMs: result.durationMs,
+              sessionId: browserSessionId,
+            });
             if (pendingEndCall || endingCall || suppressAssistantOutput) {
               console.warn(`[VoiceAgent/Browser] Skipping stale function output for ${name}`);
               return;
@@ -2916,6 +3269,11 @@ function handleBrowserSession(ws: WebSocket): void {
     if (browserCallEndedSent) return;
     browserCallEndedSent = true;
     const endedAt = Date.now();
+    logChannelBoundary("Browser", "End", {
+      reason,
+      sessionId: browserSessionId,
+      durationMs: browserCallStartedAt ? endedAt - browserCallStartedAt : undefined,
+    });
     await Promise.all([
       sendBrowserOrderConfirmation(),
       sendBrowserStoreManagerSummary(endedAt),
@@ -3281,6 +3639,7 @@ function handleBrowserSession(ws: WebSocket): void {
     if (!openai || endingCall || pendingEndCall || browserProfileConfirmationAsked || browserProfileConfirmed) return;
     clearBrowserIdleFollowUp();
     browserAcceptedInitialIntent = initialIntent.trim();
+    browserActiveRequestedProduct = resolvePrimaryProductName(browserAcceptedInitialIntent);
     browserProfileConfirmationAsked = true;
     openai.triggerResponse({
       input: [
@@ -3342,6 +3701,10 @@ function handleBrowserSession(ws: WebSocket): void {
     if (pendingEndCall || endingCall) return;
     clearBrowserIdleFollowUp();
     pendingEndCall = true;
+    logToolLine("Tool", "Browser", voiceEndCallTool.name, {
+      args: { reason, source },
+      sessionId: browserSessionId,
+    });
     sendEvent({
       type: "toolCallStarted",
       toolName: voiceEndCallTool.name,
@@ -3355,6 +3718,12 @@ function handleBrowserSession(ws: WebSocket): void {
       result: createEndCallResult(reason).result,
       data: { reason },
       timestamp: Date.now(),
+    });
+    logToolLine("ToolResult", "Browser", voiceEndCallTool.name, {
+      success: true,
+      result: createEndCallResult(reason).result,
+      data: { reason },
+      sessionId: browserSessionId,
     });
     const alreadySaidClosing = isAssistantClosingTranscript(lastAssistantTranscript);
     if (!alreadySaidClosing) {
@@ -3389,6 +3758,7 @@ function handleBrowserSession(ws: WebSocket): void {
 
   async function runStartupRetailProfileLookup(): Promise<string> {
     const lookupArgs = {};
+    logToolLine("Tool", "Browser", "retail_profile_lookup", { args: lookupArgs, sessionId: browserSessionId });
     sendEvent({
       type: "toolCallStarted",
       toolName: "retail_profile_lookup",
@@ -3396,6 +3766,14 @@ function handleBrowserSession(ws: WebSocket): void {
       timestamp: Date.now(),
     });
     const profileLookup = await executeTool("retail_profile_lookup", lookupArgs);
+    logToolLine("ToolResult", "Browser", "retail_profile_lookup", {
+      success: profileLookup.success,
+      result: profileLookup.result,
+      error: profileLookup.error,
+      data: profileLookup.data,
+      durationMs: profileLookup.durationMs,
+      sessionId: browserSessionId,
+    });
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_profile_lookup",
