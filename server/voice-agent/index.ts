@@ -103,6 +103,7 @@ import {
 } from "./voice_runtime";
 
 const twilioMonitorClients = new Map<string, Set<WebSocket>>();
+const ASSISTANT_TRANSCRIPT_DEDUPE_MS = 2000;
 
 function normalizeTranscript(text: string): string {
   return text.trim().toLowerCase().replace(/[.!?,\s]+$/g, "");
@@ -114,6 +115,12 @@ function normalizeIntentText(text: string): string {
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
+}
+
+function isDuplicateAssistantTranscript(text: string, lastText: string, lastDoneAt: number): boolean {
+  if (!lastText || !lastDoneAt) return false;
+  if (Date.now() - lastDoneAt > ASSISTANT_TRANSCRIPT_DEDUPE_MS) return false;
+  return normalizeIntentText(text) === normalizeIntentText(lastText);
 }
 
 type VoiceLogChannel = "PSTN" | "Browser";
@@ -1320,6 +1327,7 @@ function handleTwilioSession(ws: WebSocket): void {
 
         openai.on("assistantTranscriptDone", (text: string) => {
           const trimmed = text.trim();
+          if (!trimmed) return;
           if (suppressAssistantOutput) {
             console.warn(`[VoiceAgent/Twilio] Suppressed assistant output after prior response cancellation: ${trimmed}`);
             return;
@@ -1329,6 +1337,7 @@ function handleTwilioSession(ws: WebSocket): void {
             suppressTwilioAssistantResponse("Unsafe assistant transcript");
             return;
           }
+          if (isDuplicateAssistantTranscript(trimmed, lastAssistantTranscript, lastAssistantDoneAt)) return;
           if (trimmed) {
             assistantTurnCount++;
             lastAssistantDoneAt = Date.now();
@@ -2806,6 +2815,7 @@ function handleBrowserSession(ws: WebSocket): void {
             suppressBrowserAssistantResponse("Unsafe assistant transcript");
             return;
           }
+          if (isDuplicateAssistantTranscript(trimmed, lastAssistantTranscript, lastAssistantDoneAt)) return;
           lastAssistantDoneAt = Date.now();
           assistantTurnCount++;
           lastAssistantTranscript = trimmed;

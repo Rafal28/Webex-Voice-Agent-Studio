@@ -42,6 +42,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
   private apiKey: string;
   private config: RealtimeSessionConfig;
   private emittedAssistantTranscriptInResponse = false;
+  private lastAssistantTranscriptInResponse = "";
   private responseActive = false;
   private responseCreateInFlight = false;
   private pendingResponseCreates: Array<Record<string, unknown> | undefined> = [];
@@ -128,6 +129,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
         this.responseActive = true;
         this.responseCreateInFlight = false;
         this.emittedAssistantTranscriptInResponse = false;
+        this.lastAssistantTranscriptInResponse = "";
         this.emit("responseStarted", event.response);
         break;
       case "input_audio_buffer.speech_started":
@@ -268,9 +270,17 @@ export class OpenAIRealtimeClient extends EventEmitter {
   }
 
   private emitAssistantTranscriptDone(text: string): void {
-    if (!text?.trim()) return;
+    const cleaned = text?.trim();
+    if (!cleaned) return;
+    const normalized = normalizeRealtimeTranscript(cleaned);
+    if (
+      this.emittedAssistantTranscriptInResponse &&
+      normalized &&
+      normalized === this.lastAssistantTranscriptInResponse
+    ) return;
     this.emittedAssistantTranscriptInResponse = true;
-    this.emit("assistantTranscriptDone", text);
+    this.lastAssistantTranscriptInResponse = normalized;
+    this.emit("assistantTranscriptDone", cleaned);
   }
 
   close(): void {
@@ -312,6 +322,14 @@ function isBenignRealtimeError(error: any): boolean {
 function isCancelledRealtimeResponse(response: any): boolean {
   const status = String(response?.status || "").toLowerCase();
   return status === "cancelled" || status === "canceled";
+}
+
+function normalizeRealtimeTranscript(text: string): string {
+  return String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?,\s]+$/g, "")
+    .replace(/\s+/g, " ");
 }
 
 function getRealtimeAudioFormat(format: RealtimeSessionConfig["inputAudioFormat"]): { type: string; rate?: 24000 } {
