@@ -24,6 +24,7 @@ function stripLeadingDiscourseMarkers(text: string): string {
 
 function hasAdditionalHelpRequest(text: string): boolean {
   if (!text) return false;
+  if (isNegativeNoMoreHelpAnswer(text)) return false;
   if (/\b(dont|do not|no need|not now|not right now)\b.*\b(need|want|have|anything|something|else|more)\b/.test(text)) {
     return false;
   }
@@ -111,6 +112,9 @@ function isNegativeNoMoreHelpAnswer(text: string): boolean {
   if (!text) return false;
   return (
     /^(no|nope|nah|not really|no worries)$/.test(text) ||
+    /^(no|nope|nah)\b.*\b(all|everything)\s+(i|we)\s+(needed|need|had|have)\b/.test(text) ||
+    /\b(i|we)\s+(dont|do not)\s+(need|want|have)\b.*\b(anything|something)?\s*(else|more)\b/.test(text) ||
+    /\b(i|we)\s+(am|are)\s+all\s+set\b.*\b(dont|do not|no need|nothing else|anything else)\b/.test(text) ||
     /^(no|nope|nah)\s+(thanks|thank you)\s+(im|i am)\s+(good|okay|ok|fine|all good|all set)(\s+(thanks|thank you))?$/.test(text) ||
     /^(no|nope|nah)\s+(thanks|thank you)\s+(thats all|that is all|thats it|that is it|all good|nothing else)$/.test(text) ||
     /^(no|nope|nah)\s+(thanks|thank you|im good|i am good|im okay|i am okay|im ok|i am ok|im fine|i am fine|im all good|i am all good|im all set|i am all set|all good|all set|thats all|that is all|thats all good|that is all good|thats it|that is it|that should do it|thatll do it|nothing else|not right now|not at the moment|not today|no more|no more questions)(\s+(thanks|thank you))?$/.test(text) ||

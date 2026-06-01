@@ -28,6 +28,9 @@ const negativeAnswers = [
   "I think that's good for now.",
   "That's good for now.",
   "That works for now.",
+  "No, I think that is all I needed today, thank you.",
+  "I am all set and do not need anything else.",
+  "I do not need anything else today, thank you.",
 ];
 
 const positiveAnswers = [

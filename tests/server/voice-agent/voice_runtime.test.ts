@@ -92,6 +92,24 @@ assert.deepEqual(conversationalFinalNegativeDecision.action, {
 assert.equal(conversationalFinalNegativeDecision.finalCheckInAsked, true);
 assert.equal(canEndCallFromUserTranscript("You know, that's about it.", FINAL_CHECK_IN_TEXT, true), true);
 
+const longFinalNegativeDecision = getAcceptedUserTurnDecision({
+  text: "I do not need anything else today, thank you.",
+  lastAssistantTranscript: FINAL_CHECK_IN_TEXT,
+  pendingAddOnOffer: false,
+  pendingPickupProposal: false,
+  finalCheckInAsked: true,
+  profileConfirmationNeeded: false,
+  softDeclineReason: "soft decline",
+  endCallReason: "end call",
+});
+
+assert.deepEqual(longFinalNegativeDecision.action, {
+  type: "request_graceful_end_call",
+  reason: "end call",
+});
+assert.equal(longFinalNegativeDecision.finalCheckInAsked, true);
+assert.equal(canEndCallFromUserTranscript("I do not need anything else today, thank you.", FINAL_CHECK_IN_TEXT, true), true);
+
 const effects = getAssistantTranscriptEffects(
   `Would you like me to add a Purple Protective Case? ${FINAL_CLOSING_TEXT}`
 );

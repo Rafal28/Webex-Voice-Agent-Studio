@@ -106,6 +106,22 @@ try {
   assert.equal(twilioNameConfirmationAccepted, false);
   assert.equal(browserNameConfirmationAccepted, false);
 
+  const twilioLongNameConfirmationAccepted = shouldSuppressTwilioUserTranscript("Yes, my full name is Uday Srinath.", {
+    lastAssistantAudioAt: 99_900,
+    lastAssistantDoneAt: 99_900,
+    lastAssistantTranscript: "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?",
+    twilioResponseActive: false,
+  });
+  const browserLongNameConfirmationAccepted = shouldSuppressBrowserUserTranscript("Yes, my full name is Uday Srinath.", {
+    lastAssistantAudioAt: 99_900,
+    lastAssistantDoneAt: 99_900,
+    lastAssistantTranscript: "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?",
+    browserPlaybackActive: false,
+    responseActive: false,
+  });
+  assert.equal(twilioLongNameConfirmationAccepted, false);
+  assert.equal(browserLongNameConfirmationAccepted, false);
+
   const twilioFinalCheckInAccepted = shouldSuppressTwilioUserTranscript("I'm good", {
     lastAssistantAudioAt: 99_900,
     lastAssistantDoneAt: 99_900,
