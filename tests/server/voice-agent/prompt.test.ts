@@ -5,10 +5,13 @@ import {
 } from "../../../shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE } from "../../../shared/use-cases";
 import {
+  PROFILE_CONFIRMATION_TEXT,
   buildBrowserTranscriptionPrompt,
   buildOpenAIVoiceAgentInstructions,
   buildRetailTranscriptionKeywords,
   buildPhoneTranscriptionPrompt,
+  getAcceptedUserTurnInputText,
+  getAcceptedUserTurnResponseInstructions,
   getProfileConfirmationPrompt,
 } from "../../../server/voice-agent/prompt";
 
@@ -35,6 +38,14 @@ assert.equal(browserProfilePrompt, twilioProfilePrompt);
 assert.match(browserProfilePrompt, /pre-confirmation intent/i);
 assert.match(browserProfilePrompt, /keep it as the active request after profile confirmation/i);
 assert.match(browserProfilePrompt, /without asking what they want to shop for again/i);
+
+assert.equal(getAcceptedUserTurnInputText(" Mayada Abdelrahman "), "Mayada Abdelrahman");
+const acceptedTurnInstructions = getAcceptedUserTurnResponseInstructions(PROFILE_CONFIRMATION_TEXT);
+assert.match(acceptedTurnInstructions, /authoritative/i);
+assert.match(acceptedTurnInstructions, /ignore any conflicting audio/i);
+assert.match(acceptedTurnInstructions, /first and last name/i);
+assert.match(acceptedTurnInstructions, /retail_confirm_profile/i);
+assert.match(acceptedTurnInstructions, /plausible/i);
 
 const browserCallInstructions = buildOpenAIVoiceAgentInstructions({
   confirmationSpokenRoute: "sms",

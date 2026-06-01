@@ -39,6 +39,8 @@ import {
   FINAL_CHECK_IN_TEXT,
   PROFILE_CONFIRMATION_TEXT,
   TRANSCRIPT_REVIEW_SYSTEM_PROMPT,
+  getAcceptedUserTurnInputText,
+  getAcceptedUserTurnResponseInstructions,
   buildOpenAIVoiceAgentInstructions,
   buildRetailTranscriptionKeywords,
   getAddOnAnswerCheckInPrompt,
@@ -51,7 +53,6 @@ import {
   getIdleFollowUpResponseInstructions,
   getOpeningGreetingInstructions,
   getProfileConfirmationPrompt,
-  getRetryAcceptedUserTurnPrompt,
   getVoiceSessionStartedPrompt,
 } from "./prompt";
 import type {
@@ -153,6 +154,28 @@ function logToolLine(
   payload: Record<string, unknown>
 ): void {
   console.log(`[${kind}][${channel}] ${compactJson({ toolName, ...payload })}`);
+}
+
+function buildAcceptedUserTurnResponseCreate(
+  lastUserTranscript: string,
+  lastAssistantTranscript: string
+): Record<string, unknown> {
+  return {
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: getAcceptedUserTurnInputText(lastUserTranscript),
+          },
+        ],
+      },
+    ],
+    output_modalities: ["audio"],
+    instructions: getAcceptedUserTurnResponseInstructions(lastAssistantTranscript),
+  };
 }
 
 function getCatalogProductName(text: string): string {
@@ -438,6 +461,31 @@ function createNeedsCheckInEndCallResult(
   };
 }
 
+function getProfileConfirmationTranscriptGuardResult(
+  toolName: string,
+  lastUserTranscript: string,
+  lastAssistantTranscript: string
+): ToolExecutionResult | null {
+  if (toolName !== "retail_confirm_profile") return null;
+  if (!isProfileNameConfirmationTurn(lastAssistantTranscript)) return null;
+  if (isPlausibleProfileConfirmationTranscript(lastUserTranscript, lastAssistantTranscript)) return null;
+
+  const cleanedTranscript = lastUserTranscript.trim();
+  const message =
+    "Profile confirmation was blocked because the accepted caller transcript did not look like a name answer. Ask the caller to confirm their first and last name again before using customer details.";
+  return {
+    success: false,
+    result: message,
+    error: message,
+    data: {
+      verified: false,
+      reason: "profile-confirmation-transcript-not-name",
+      lastUserTranscript: cleanedTranscript,
+    },
+    durationMs: 0,
+  };
+}
+
 function isCompleteInitialIntentTranscript(text: string): boolean {
   const normalized = normalizeIntentText(text);
   if (!normalized) return false;
@@ -532,14 +580,19 @@ function applyDemoNameTranscriptCorrection(text: string, lastAssistantTranscript
   return text;
 }
 
-function isImmediateBargeInTranscript(text: string): boolean {
+function getProfileNameCandidateFromLeadIn(text: string): { text: string; hasLeadIn: boolean } {
   const normalized = normalizeIntentText(text);
-  if (!normalized) return false;
-  if (isEndCallIntent(normalized)) return true;
-  return /^(yes|yeah|yep|no|nope|nah|ok|okay|sure|stop|wait|hold on|hang on|one sec|one second|actually|no wait|repeat that|can you repeat|sorry|sorry what|what)$/.test(normalized);
+  const match = normalized.match(
+    /^(?:(?:yes|yeah|yep|sure|ok|okay)\s+)?(?:(?:my|the|full|last)\s+name\s+is|name\s+is|this\s+is|it\s+is|its|i\s+am|im)\s+(.+)$/
+  );
+  return match ? { text: match[1].trim(), hasLeadIn: true } : { text: normalized, hasLeadIn: false };
 }
 
-function isLikelyProfileNameAnswer(text: string, lastAssistantTranscript: string): boolean {
+function hasNonNameProfileConfirmationSignal(text: string): boolean {
+  return /\b(weather|question|asking|about|today|tomorrow|yesterday|help|need|want|wanted|looking|check|stock|inventory|available|availability|product|store|pickup|reservation|reserve|call|text|message|can|could|would|should|what|where|when|why|how|who|which|do|does|did|are|were|was|is|am|you|your|me|my|i|we|they|it|that|this|the|a|an|and|or|but|if|for|with|from|to|of|in|on|at|by)\b/.test(text);
+}
+
+export function isPlausibleProfileConfirmationTranscript(text: string, lastAssistantTranscript: string): boolean {
   if (!isProfileNameConfirmationTurn(lastAssistantTranscript)) return false;
   const corrected = applyDemoNameTranscriptCorrection(text, lastAssistantTranscript);
   const normalized = normalizeIntentText(corrected);
@@ -550,11 +603,26 @@ function isLikelyProfileNameAnswer(text: string, lastAssistantTranscript: string
   const lastName = normalizeIntentText(profile.lastName);
   const fullName = normalizeIntentText(profile.name);
   if (normalized === firstName || normalized === lastName || normalized === fullName) return true;
+  if (isBriefButValidTranscript(normalized) || isEndCallIntent(normalized) || isBriefGreetingTranscript(normalized)) return false;
 
-  const words = normalized.split(/\s+/).filter(Boolean);
+  const candidate = getProfileNameCandidateFromLeadIn(text);
+  if (!candidate.text || hasNonNameProfileConfirmationSignal(candidate.text)) return false;
+
+  const words = candidate.text.split(/\s+/).filter(Boolean);
   if (words.length < 1 || words.length > 4) return false;
-  if (isBriefButValidTranscript(normalized) || isEndCallIntent(normalized)) return false;
+  if (words.length === 1 && !candidate.hasLeadIn) return false;
   return words.every((word) => /^[a-z][a-z'-]{1,}$/i.test(word));
+}
+
+function isImmediateBargeInTranscript(text: string): boolean {
+  const normalized = normalizeIntentText(text);
+  if (!normalized) return false;
+  if (isEndCallIntent(normalized)) return true;
+  return /^(yes|yeah|yep|no|nope|nah|ok|okay|sure|stop|wait|hold on|hang on|one sec|one second|actually|no wait|repeat that|can you repeat|sorry|sorry what|what)$/.test(normalized);
+}
+
+function isLikelyProfileNameAnswer(text: string, lastAssistantTranscript: string): boolean {
+  return isPlausibleProfileConfirmationTranscript(text, lastAssistantTranscript);
 }
 
 function isProtectedAnswerTranscript(text: string, lastAssistantTranscript: string): boolean {
@@ -697,6 +765,10 @@ function shouldReviewUserTranscript(
   if (isBriefButValidTranscript(trimmed)) return false;
   if (isClearShortConfirmationTranscript(trimmed)) return false;
   if (isLikelyVerificationCodeTranscript(trimmed)) return false;
+  if (isProfileNameConfirmationTurn(context.lastAssistantTranscript)) {
+    const wordCount = normalizeIntentText(trimmed).split(/\s+/).filter(Boolean).length;
+    if (wordCount <= 16) return true;
+  }
   if (isConstrainedRetailAnswerTurn(context.lastAssistantTranscript)) {
     const wordCount = normalizeIntentText(trimmed).split(/\s+/).filter(Boolean).length;
     if (wordCount <= 16) return true;
@@ -1458,7 +1530,12 @@ function handleTwilioSession(ws: WebSocket): void {
                   latestReservation,
                 })
               : null;
-            const guardFailure = inventoryGuardFailure || reservationGuardFailure;
+            const profileConfirmationGuardFailure = getProfileConfirmationTranscriptGuardResult(
+              name,
+              lastUserTranscript,
+              lastAssistantTranscript
+            );
+            const guardFailure = inventoryGuardFailure || reservationGuardFailure || profileConfirmationGuardFailure;
             const rawResult = guardFailure
               ? guardFailure
               : name === "retail_reserve_item" && !inventoryLookupSucceeded
@@ -2034,21 +2111,7 @@ function handleTwilioSession(ws: WebSocket): void {
       userTurnResponseTimer = null;
       if (!openai || pendingEndCall || endingCall || twilioResponseActive) return;
       console.warn(`[VoiceAgent/Twilio] Retrying stalled response after accepted user turn: ${reason}`);
-      openai.triggerResponse({
-        input: [
-          {
-            type: "message",
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: getRetryAcceptedUserTurnPrompt(lastUserTranscript),
-              },
-            ],
-          },
-        ],
-        output_modalities: ["audio"],
-      });
+      openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
     }, ACCEPTED_USER_TURN_RESPONSE_TIMEOUT_MS);
   }
 
@@ -2165,13 +2228,13 @@ function handleTwilioSession(ws: WebSocket): void {
       setTimeout(() => {
         if (!openai || pendingEndCall || endingCall) return;
         suppressAssistantOutput = false;
-        openai.triggerResponse();
+        openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
         scheduleTwilioUserTurnResponseWatchdog("cancelled interrupted assistant response did not restart");
       }, interruptedAssistant ? 150 : 0);
       return;
     }
 
-    openai.triggerResponse();
+    openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
     scheduleTwilioUserTurnResponseWatchdog("accepted user turn response did not start");
   }
 
@@ -2974,7 +3037,12 @@ function handleBrowserSession(ws: WebSocket): void {
                   latestReservation,
                 })
               : null;
-            const guardFailure = inventoryGuardFailure || reservationGuardFailure;
+            const profileConfirmationGuardFailure = getProfileConfirmationTranscriptGuardResult(
+              name,
+              lastUserTranscript,
+              lastAssistantTranscript
+            );
+            const guardFailure = inventoryGuardFailure || reservationGuardFailure || profileConfirmationGuardFailure;
             const rawResult = guardFailure
               ? guardFailure
               : name === "retail_reserve_item" && !inventoryLookupSucceeded
@@ -3440,21 +3508,7 @@ function handleBrowserSession(ws: WebSocket): void {
       userTurnResponseTimer = null;
       if (!openai || pendingEndCall || endingCall || responseActive) return;
       console.warn(`[VoiceAgent/Browser] Retrying stalled response after accepted user turn: ${reason}`);
-      openai.triggerResponse({
-        input: [
-          {
-            type: "message",
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: getRetryAcceptedUserTurnPrompt(lastUserTranscript),
-              },
-            ],
-          },
-        ],
-        output_modalities: ["audio"],
-      });
+      openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
     }, ACCEPTED_USER_TURN_RESPONSE_TIMEOUT_MS);
   }
 
@@ -3829,13 +3883,13 @@ function handleBrowserSession(ws: WebSocket): void {
       setTimeout(() => {
         if (!openai || pendingEndCall || endingCall) return;
         suppressAssistantOutput = false;
-        openai.triggerResponse();
+        openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
         scheduleBrowserUserTurnResponseWatchdog("cancelled interrupted assistant response did not restart");
       }, interruptedAssistant ? 150 : 0);
       return;
     }
 
-    openai.triggerResponse();
+    openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
     scheduleBrowserUserTurnResponseWatchdog("accepted user turn response did not start");
   }
 

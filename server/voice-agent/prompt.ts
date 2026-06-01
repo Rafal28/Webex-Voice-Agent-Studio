@@ -32,7 +32,7 @@ export function buildRetailTranscriptionKeywords(env: NodeJS.ProcessEnv = proces
 }
 
 export const TRANSCRIPT_REVIEW_SYSTEM_PROMPT =
-  "You correct noisy ASR transcripts from an en-US browser or PSTN voice assistant call. Return JSON only: {\"action\":\"keep|replace|suppress\",\"text\":\"...\"}. Keep clear English, including normal short replies like yes, no, hey, thanks, or thank you. Replace only when the correction is obvious from phonetics/context. When the last assistant turn offered a small closed set of product or store options, correct obvious ASR confusions only to one of those offered options or to the provided retail vocabulary. Suppress non-English false positives, assistant echo, names invented by ASR, accidental background speech, invented-looking single words, or unclear fragments. Do not invent product details.";
+  "You correct noisy ASR transcripts from an en-US browser or PSTN voice assistant call. Return JSON only: {\"action\":\"keep|replace|suppress\",\"text\":\"...\"}. Keep clear English, including normal short replies like yes, no, hey, thanks, or thank you. Replace only when the correction is obvious from phonetics/context. When the last assistant turn asked for profile name confirmation, replace only obvious phonetic captures of the caller's name to the provided name hints; if the caller says unrelated content, keep that unrelated content instead of inventing a name. When the last assistant turn offered a small closed set of product or store options, correct obvious ASR confusions only to one of those offered options or to the provided retail vocabulary. Suppress non-English false positives, assistant echo, names invented by ASR, accidental background speech, invented-looking single words, or unclear fragments. Do not invent product details.";
 
 export function buildOpenAIVoiceAgentInstructions(options: {
   callerPhone?: string;
@@ -273,8 +273,27 @@ export function getOpeningGreetingInstructions(agentName?: string): string {
   return `${identity}Reply in en-US with a warm store greeting: '${OPENING_GREETING_TEXT}' Do not use a customer name, prior customer memory, or internal context. Do not repeat this greeting later.`;
 }
 
+export function getAcceptedUserTurnInputText(lastUserTranscript: string): string {
+  return lastUserTranscript.trim();
+}
+
+export function getAcceptedUserTurnResponseInstructions(lastAssistantTranscript = ""): string {
+  return [
+    "The latest input_text message is the server-accepted transcript of the caller's latest utterance.",
+    "Treat that text as authoritative and ignore any conflicting audio interpretation or earlier raw transcript for this turn.",
+    "Do not mention transcripts, correction, ASR, or server handling to the caller.",
+    "Continue the retail flow naturally from that exact caller utterance.",
+    lastAssistantTranscript
+      ? `The last assistant prompt was: "${lastAssistantTranscript}"`
+      : "",
+    /first and last name|last name|confirm.*name|verify.*name/i.test(lastAssistantTranscript)
+      ? "Call retail_confirm_profile only if the authoritative text itself is a plausible first-and-last-name or last-name answer. If the authoritative text is unrelated, do not confirm the profile; respond briefly and ask for the name again."
+      : "",
+  ].filter(Boolean).join(" ");
+}
+
 export function getRetryAcceptedUserTurnPrompt(lastUserTranscript: string): string {
-  return `The caller just said: "${lastUserTranscript}". Continue the retail flow with one concise, helpful response. If they selected a product option, proceed with the selected option and the next required action.`;
+  return `The authoritative server-accepted caller transcript is: "${lastUserTranscript}". Continue the retail flow with one concise, helpful response. If they selected a product option, proceed with the selected option and the next required action.`;
 }
 
 export function getIdleFollowUpInstruction(lastAssistantTranscript: string): string {

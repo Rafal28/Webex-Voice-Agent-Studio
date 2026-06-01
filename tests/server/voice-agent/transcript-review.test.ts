@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  isPlausibleProfileConfirmationTranscript,
   reviewEnglishUserTranscript,
   shouldSuppressBrowserUserTranscript,
   shouldSuppressTwilioUserTranscript,
@@ -53,6 +54,31 @@ try {
   assert.deepEqual(correctedNameResult, {
     action: "replace",
     text: "Mayada Abdelrahman",
+  });
+
+  assert.equal(
+    isPlausibleProfileConfirmationTranscript(
+      "Myata Abdulrahman.",
+      "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?",
+    ),
+    true,
+  );
+  assert.equal(
+    isPlausibleProfileConfirmationTranscript(
+      "I was asking about the weather today.",
+      "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?",
+    ),
+    false,
+  );
+
+  const weatherProfileTurnResult = await reviewEnglishUserTranscript("I was asking about the weather today.", {
+    agentName: "Store Assistant",
+    lastAssistantTranscript: "Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?",
+  });
+
+  assert.deepEqual(weatherProfileTurnResult, {
+    action: "keep",
+    text: "I was asking about the weather today.",
   });
 
   Date.now = () => 100_000;
