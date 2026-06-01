@@ -82,6 +82,7 @@ import {
   TWILIO_ASSISTANT_ECHO_MATCH_MS,
   TWILIO_END_CALL_FALLBACK_MS,
   TWILIO_END_CALL_MAX_WAIT_MS,
+  TWILIO_EXPECTED_ANSWER_SPEECH_START_GUARD_MS,
   TWILIO_TRANSCRIPT_ECHO_GUARD_MS,
   VOICE_PROVISIONAL_BARGE_IN_RELEASE_MS,
 } from "./runtime_constants";
@@ -1053,6 +1054,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let twilioEndCallFallbackStartedAt: number | null = null;
   let provisionalTwilioBargeInActive = false;
   let provisionalTwilioBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  let twilioExpectedAnswerSpeechStartTimer: ReturnType<typeof setTimeout> | null = null;
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -1103,6 +1105,7 @@ function handleTwilioSession(ws: WebSocket): void {
         twilioActiveRequestedProduct = "";
         twilioLatestInventoryProduct = "";
         twilioLatestInventoryItemName = "";
+        clearTwilioExpectedAnswerSpeechStartTimer();
         const smsRecipientPhone = resolveDemoSmsRecipientPhone(callerPhone);
         const canSendCallerSummarySms = canSendCallSummarySms(callerPhone);
 
@@ -1188,6 +1191,7 @@ function handleTwilioSession(ws: WebSocket): void {
               itemId: pendingTwilioUserSpeechItemId,
               audioStartMs: pendingTwilioUserSpeechAudioStartMs,
             });
+            scheduleTwilioExpectedAnswerSpeechStartBargeIn();
           }
         });
 
@@ -1706,6 +1710,7 @@ function handleTwilioSession(ws: WebSocket): void {
         break;
       case "stop":
         clearTwilioUserTurnResponseWatchdog();
+        clearTwilioExpectedAnswerSpeechStartTimer();
         openai?.close();
         sendCallEnded();
         break;
@@ -1716,6 +1721,7 @@ function handleTwilioSession(ws: WebSocket): void {
     clearTwilioIdleFollowUp();
     clearTwilioUserTurnResponseWatchdog();
     clearProvisionalTwilioBargeInRelease();
+    clearTwilioExpectedAnswerSpeechStartTimer();
     openai?.close();
     sendCallEnded();
   });
@@ -2070,6 +2076,13 @@ function handleTwilioSession(ws: WebSocket): void {
     }
   }
 
+  function clearTwilioExpectedAnswerSpeechStartTimer(): void {
+    if (twilioExpectedAnswerSpeechStartTimer) {
+      clearTimeout(twilioExpectedAnswerSpeechStartTimer);
+      twilioExpectedAnswerSpeechStartTimer = null;
+    }
+  }
+
   function releaseProvisionalTwilioBargeIn(): void {
     clearProvisionalTwilioBargeInRelease();
     if (!provisionalTwilioBargeInActive) return;
@@ -2078,10 +2091,34 @@ function handleTwilioSession(ws: WebSocket): void {
   }
 
   function clearPendingTwilioUserSpeechCandidate(): void {
+    clearTwilioExpectedAnswerSpeechStartTimer();
     pendingTwilioUserSpeechStartedAt = null;
     pendingTwilioUserSpeechAudioStartMs = null;
     pendingTwilioUserSpeechItemId = null;
     twilioTranscriptPreview = "";
+  }
+
+  function shouldCutTwilioPlaybackOnExpectedAnswerSpeechStart(): boolean {
+    if (twilioProfileConfirmationAsked && !twilioProfileConfirmed) return true;
+    if (twilioFinalCheckInAsked || twilioPendingAddOnOffer || twilioPendingPickupProposal) return true;
+    return isAssistantWaitingForCallerAnswerTranscript(assistantTranscriptGuard || lastAssistantTranscript);
+  }
+
+  function scheduleTwilioExpectedAnswerSpeechStartBargeIn(): void {
+    clearTwilioExpectedAnswerSpeechStartTimer();
+    if (!shouldCutTwilioPlaybackOnExpectedAnswerSpeechStart()) return;
+    twilioExpectedAnswerSpeechStartTimer = setTimeout(() => {
+      twilioExpectedAnswerSpeechStartTimer = null;
+      if (!pendingTwilioUserSpeechStartedAt) return;
+      if (!hasActiveTwilioAssistantPlayback()) return;
+      if (!shouldCutTwilioPlaybackOnExpectedAnswerSpeechStart()) return;
+      console.debug("[VoiceAgent/Twilio] Accepted expected-answer speech-start barge-in", {
+        elapsedMs: Date.now() - pendingTwilioUserSpeechStartedAt,
+        itemId: pendingTwilioUserSpeechItemId,
+        audioStartMs: pendingTwilioUserSpeechAudioStartMs,
+      });
+      provisionallyCutTwilioAssistantPlayback();
+    }, TWILIO_EXPECTED_ANSWER_SPEECH_START_GUARD_MS);
   }
 
   function maybeProvisionallyCutTwilioAssistantPlaybackFromTranscript(text: string): void {
